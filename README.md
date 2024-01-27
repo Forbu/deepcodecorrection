@@ -2,7 +2,7 @@
 
 Error correction code (https://en.wikipedia.org/wiki/Error_correction_code) is an important part of radio telecommunication network.
 
-The idea of error correction code is to add redundenty in the original transmitted signal in order to be robust to signal corruption.
+The idea of error correction code is to add redundancy in the original transmitted signal in order to be robust to signal corruption.
 
 ## Deep learning and transformer
 
