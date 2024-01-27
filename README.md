@@ -12,6 +12,10 @@ One can exploit the powerful tools that is deep learning to try to create a prop
 
 ## The idea
 
-![Screenshot 2024-01-27 at 19 48 33](https://github.com/Forbu/deepcodecorrection/assets/11457947/6c20c38d-3d37-4823-836c-d6523c0c0fc3)
+![Screenshot 2024-01-27 at 19 54 20](https://github.com/Forbu/deepcodecorrection/assets/11457947/38d1d215-b941-4e3b-a954-973fa5b4df87)
 
 The idea is to use a discrete code representation couple with clever transformer (permutation invariant architecture) to try to reproduce the performance of classic error correction code.
+
+The "noise" box represent the environment noise that can corrupt the transmitted data.
+
+
