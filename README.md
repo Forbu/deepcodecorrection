@@ -13,6 +13,7 @@ One can exploit the powerful tools that is deep learning to try to create a prop
 ## The idea
 
 ![Screenshot 2024-01-27 at 19 54 20](https://github.com/Forbu/deepcodecorrection/assets/11457947/38d1d215-b941-4e3b-a954-973fa5b4df87)
+![Screenshot 2024-01-27 at 19 57 04](https://github.com/Forbu/deepcodecorrection/assets/11457947/ce1fe5db-7cb7-46a7-b7b3-62c4fc89fe41)
 
 The idea is to use a discrete code representation couple with clever transformer (permutation invariant architecture) to try to reproduce the performance of classic error correction code.
 
