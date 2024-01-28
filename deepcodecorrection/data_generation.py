@@ -19,7 +19,10 @@ class NoiseDataset(Dataset):
     (and at the end, predict)
     """
 
-    def __init__(self, dim_input, lenght_epoch):
+    def __init__(self, dim_input, lenght_epoch, max_class=8):
+        super().__init__()
+
+        self.max_class = max_class
         self.dim_input = dim_input
         self.lenght_epoch = lenght_epoch
 
@@ -27,4 +30,4 @@ class NoiseDataset(Dataset):
         return self.lenght_epoch
 
     def __getitem__(self, idx):
-        return torch.randint(low=0, high=8)
+        return torch.randint(low=0, high=self.max_class, size=(self.dim_input,))
