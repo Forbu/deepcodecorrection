@@ -54,11 +54,21 @@ class PLTrainer(pl.Trainer):
 
         # embedding for the actual input
         self.input_embedding_emitter = nn.Embedding(nb_class, dim_global)
-        self.input_embedding_receiver = nn.Embedding(nb_class, dim_global)
 
         self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, x, coeff_code_rate):
+        """
+        Forward pass of the neural network model.
+
+        Args:
+            self: the neural network instance
+            x: input tensor of shape (batch_size, seq_length)
+            coeff_code_rate: coefficient for code rate adjustment
+
+        Returns:
+            output: tensor representing the output of the neural network (batch_size, seq_length, nb_class)
+        """
         assert coeff_code_rate > 1.0
 
         batch_size, seq_length = x.shape
@@ -103,12 +113,14 @@ class PLTrainer(pl.Trainer):
 
         # adding noise
         # TODO
-        received_information = transmitted_information
+        received_information = transmitted_information # dim batch_size, dim_intermediate, 1
 
-        embedding_receiver = self.input_embedding_receiver(received_information)
-        received_information = received_information + embedding_receiver
+        # TODO resize to global dimension
+        received_information = received_information
 
         # second the receiver transformation
         output = self.receiver_transformer(received_information, receiver_position)
+        
+        # final resizing to output logits
 
         return output
