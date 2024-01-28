@@ -25,36 +25,29 @@ class PLTrainer(pl.Trainer):
         self.dim_global = dim_global
         self.coeff_code_rate = coeff_code_rate
 
-        self.emitter_transformer = nn.Transformer(
+        encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_global,
             nhead=8,
-            num_encoder_layers=6,
-            num_decoder_layers=6,
-            dim_feedforward=512,
+            dim_feedforward=dim_global * 4,
             batch_first=True,
         )
 
-        self.receiver_transformer = nn.Transformer(
+        self.emitter_transformer = nn.TransformerEncoder(encoder_layer, num_layers=6)
+
+        decoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_global,
             nhead=8,
-            num_encoder_layers=6,
-            num_decoder_layers=6,
-            dim_feedforward=512,
+            dim_feedforward=dim_global * 4,
             batch_first=True,
         )
+
+        self.receiver_transformer = nn.TransformerEncoder(decoder_layer, num_layers=6)
 
         # embedding for the position
         self.position_embedding_encoder_emitter = nn.Embedding(
             max_dim_input, dim_global
         )
         self.position_embedding_encoder_receiver = nn.Embedding(
-            max_dim_input, dim_global
-        )
-
-        self.position_embedding_decoder_emitter = nn.Embedding(
-            max_dim_input, dim_global
-        )
-        self.position_embedding_decoder_receiver = nn.Embedding(
             max_dim_input, dim_global
         )
 
@@ -97,33 +90,34 @@ class PLTrainer(pl.Trainer):
         # generate embedding for the input
         x = self.input_embedding_emitter(x)  # batch_size, seq_length, dim_global
 
-        emitter_position = (
-            torch.arange(seq_length).unsqueeze(0).repeat(batch_size, 1).to(x.device)
+        # pad with zeros to obtain dimension of batch_size, dim_intermediate, dim_global
+        x = torch.cat(
+            [
+                x,
+                torch.zeros(batch_size, dim_intermediate - seq_length, self.dim_global),
+            ],
+            dim=1,
         )
-        emitter_position = self.position_embedding_encoder_emitter(
-            emitter_position
-        )  # batch_size, seq_length, dim_global
 
-        x = x + emitter_position
-
-        # now we generate embedding for the emiiter decoder and the receiver encoder
-        transmitter_position = (
+        emitter_position_int = (
             torch.arange(dim_intermediate)
             .unsqueeze(0)
             .repeat(batch_size, 1)
             .to(x.device)
         )
+        emitter_position = self.position_embedding_encoder_emitter(
+            emitter_position_int
+        )  # batch_size, seq_length, dim_global
 
-        transmitter_position = self.position_embedding_decoder_emitter(
-            transmitter_position
-        )  # batch_size, dim_intermediate, dim_global
+        x = x + emitter_position
+
         receiver_position = self.position_embedding_encoder_receiver(
-            transmitter_position
+            emitter_position_int
         )  # batch_size, dim_intermediate, dim_global
 
         # first the emitter transformation
         transmitted_information = self.emitter_transformer(
-            x, transmitter_position
+            x
         )  # batch_size, dim_intermediate, dim_global
 
         # resize to batch_size, dim_intermediate, 1
@@ -145,12 +139,12 @@ class PLTrainer(pl.Trainer):
         received_information = received_information + receiver_position
 
         # second the receiver transformation
-        output = self.receiver_transformer(received_information, emitter_position)
+        output = self.receiver_transformer(received_information)
 
         # final resizing to output logits
         output = self.resize_output(output)
 
-        return output
+        return output[:, :seq_length, :]
 
     def compute_loss(self, x, coeff_code_rate, noise_level):
         """
