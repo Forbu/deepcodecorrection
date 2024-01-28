@@ -71,7 +71,7 @@ class PLTrainer(pl.Trainer):
         self.resize_output = nn.Linear(dim_global, nb_class)
 
         self.criterion = nn.CrossEntropyLoss()
-        
+
         # accuracy metric
         self.accuracy = torchmetrics.Accuracy()
 
@@ -202,4 +202,3 @@ class PLTrainer(pl.Trainer):
         self.log("train_accuracy", accuracy)
 
         return loss
-    
