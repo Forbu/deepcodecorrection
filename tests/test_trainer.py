@@ -1,10 +1,11 @@
 import torch
+import pytest
 
 from deepcodecorrection.pl_trainer import PLTrainer
 
 
 # Resizes the output of emitter transformation to batch_size, dim_intermediate, 1
-def test_forward_transformation_output(self):
+def test_forward_transformation_output():
     # Create an instance of the PLTrainer class
     trainer = PLTrainer(
         max_dim_input=100, nb_class=10, dim_global=32, coeff_code_rate=1.3

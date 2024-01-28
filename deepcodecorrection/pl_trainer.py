@@ -66,7 +66,7 @@ class PLTrainer(pl.Trainer):
         self.criterion = nn.CrossEntropyLoss()
 
         # accuracy metric
-        self.accuracy = torchmetrics.Accuracy()
+        self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_class)
 
     def forward(self, x, coeff_code_rate, noise_level):
         """
@@ -83,7 +83,7 @@ class PLTrainer(pl.Trainer):
         assert coeff_code_rate > 1.0
 
         batch_size, seq_length = x.shape
-        dim_intermediate = torch.round(seq_length * coeff_code_rate).int()
+        dim_intermediate = int(seq_length * coeff_code_rate)
 
         assert dim_intermediate < self.max_dim_input
 
