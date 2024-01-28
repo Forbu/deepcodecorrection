@@ -7,7 +7,7 @@ The idea of error correction code is to add redundancy in the original transmitt
 ## Deep learning and transformer
 
 One of the core development of the recent decade is the advent of deep learning and the transformer architecture.
-Also one can think of the recent development around "discrete" latent representation of data (like VQ VAE (https://arxiv.org/pdf/1711.00937.pdf) or FSQ (https://arxiv.org/abs/2202.01855).
+Also one can think of the recent development around "discrete" latent representation of data like VQ VAE (https://arxiv.org/pdf/1711.00937.pdf) or FSQ (https://arxiv.org/abs/2202.01855).
 One can exploit the powerful tools that is deep learning to try to create a proper (neural) error correction code software.
 
 ## The idea
