@@ -8,15 +8,22 @@ import lightning.pytorch as pl
 
 import torchmetrics
 
-from vector_quantize_pytorch import FSQ
+from vector_quantize_pytorch import FSQ, VectorQuantize
 
 
-class PLTrainer(pl.Trainer):
+class PLTrainer(pl.LightningModule):
     """
     Class for training with PyTorch Lightning
     """
 
-    def __init__(self, max_dim_input, nb_class, dim_global=32, coeff_code_rate=1.3):
+    def __init__(
+        self,
+        max_dim_input,
+        nb_class,
+        dim_global=32,
+        coeff_code_rate=1.3,
+        noise_level=1.0,
+    ):
         super().__init__()
 
         self.dim_global = dim_global
@@ -24,6 +31,7 @@ class PLTrainer(pl.Trainer):
         self.nb_class = nb_class
         self.dim_global = dim_global
         self.coeff_code_rate = coeff_code_rate
+        self.noise_level = noise_level
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_global,
@@ -58,6 +66,8 @@ class PLTrainer(pl.Trainer):
         levels = [8]  # see 4.1 and A.4.1 in the paper
         self.quantizer = FSQ(levels)
 
+        self.vq = VectorQuantize(dim=1, codebook_size=8, freeze_codebook=True)
+
         # three resizing components
         self.resize_emitter = nn.Linear(dim_global, 1)
         self.resize_receiver = nn.Linear(1, dim_global)
@@ -68,7 +78,18 @@ class PLTrainer(pl.Trainer):
         # accuracy metric
         self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_class)
 
-    def forward(self, x, coeff_code_rate, noise_level):
+        # init the whole model
+        def init_weights(m):
+            if isinstance(m, nn.Linear):
+                torch.nn.init.xavier_uniform_(m.weight)
+                m.bias.data.fill_(0.01)
+
+            if isinstance(m, nn.Embedding):
+                torch.nn.init.xavier_uniform_(m.weight)
+
+        self.apply(init_weights)
+
+    def forward(self, x, coeff_code_rate, noise_level, inference=False):
         """
         Forward pass of the neural network model.
 
@@ -94,7 +115,9 @@ class PLTrainer(pl.Trainer):
         x = torch.cat(
             [
                 x,
-                torch.zeros(batch_size, dim_intermediate - seq_length, self.dim_global),
+                torch.zeros(
+                    batch_size, dim_intermediate - seq_length, self.dim_global
+                ).to(x.device),
             ],
             dim=1,
         )
@@ -124,16 +147,29 @@ class PLTrainer(pl.Trainer):
         transmitted_information = self.resize_emitter(transmitted_information)
 
         # adding noise
-        transmitted_information = (
+        noisy_transmitted_information = (
             transmitted_information
             + torch.randn_like(transmitted_information) * noise_level
         )
 
         # discretization with FSQ
-        received_information, _ = self.quantizer(transmitted_information)
+        quantized, indices, commit_loss = self.vq(noisy_transmitted_information)
+
+        if inference == False:
+            received_information_quant = noisy_transmitted_information
+        else:
+            received_information_quant = quantized
+
+            # compute difference between noisy quant and non noisy quantized
+            non_noisy_quant, non_noisy_indices, _ = self.vq(transmitted_information)
+
+            print(
+                "shuffle level validation: ",
+                (non_noisy_indices.long() == indices.long()).float().mean(),
+            )
 
         # resize to global dimension
-        received_information = self.resize_receiver(received_information)
+        received_information = self.resize_receiver(received_information_quant)
 
         # adding position embedding
         received_information = received_information + receiver_position
@@ -144,9 +180,9 @@ class PLTrainer(pl.Trainer):
         # final resizing to output logits
         output = self.resize_output(output)
 
-        return output[:, :seq_length, :]
+        return output[:, :seq_length, :], commit_loss
 
-    def compute_loss(self, x, coeff_code_rate, noise_level):
+    def compute_loss(self, x, coeff_code_rate, noise_level, inference=False):
         """
         Compute the loss function.
 
@@ -159,15 +195,15 @@ class PLTrainer(pl.Trainer):
             loss: loss value
             output: tensor representing the output of the neural network (batch_size, seq_length, nb_class)
         """
-        output = self.forward(x, coeff_code_rate, noise_level)
+        output, commit_loss = self.forward(x, coeff_code_rate, noise_level, inference)
 
         # loss (cross entropy)
-        loss = self.criterion(output, x)
+        loss = self.criterion(output.permute(0, 2, 1), x)
 
         # accuracy
-        accuracy = self.accuracy(output, x)
+        accuracy = self.accuracy(output.permute(0, 2, 1), x)
 
-        return loss, output, accuracy
+        return loss, commit_loss, output, accuracy
 
     def training_step(self, batch, batch_idx):
         """
@@ -184,15 +220,61 @@ class PLTrainer(pl.Trainer):
 
         batch_size, seq_lenght = x.shape
 
-        # choose random noise level
-        noise_level = 0.2
+        # choose random code rate
+        coeff_code_rate = self.coeff_code_rate
+
+        loss, commit_loss, _, accuracy = self.compute_loss(
+            x, coeff_code_rate, self.noise_level
+        )
+
+        self.log("train_loss", loss)
+        self.log("train_accuracy", accuracy)
+        self.log("commit_loss", commit_loss)
+
+        return loss + commit_loss / 15.0
+
+    def validation_step(self, batch, batch_idx):
+        """
+        Perform a validation step for the given batch and batch index.
+
+        Args:
+            batch: The input batch for validation.
+            batch_idx: The index of the batch.
+
+        Returns:
+            The loss value after the validation step.
+        """
+        x = batch
+
+        batch_size, seq_lenght = x.shape
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, _, accuracy = self.compute_loss(x, coeff_code_rate, noise_level)
+        loss, commit_loss, _, accuracy = self.compute_loss(
+            x, coeff_code_rate, self.noise_level, inference=True
+        )
 
-        self.log("train_loss", loss)
-        self.log("train_accuracy", accuracy)
+        self.log("val_loss", loss)
+        self.log("val_accuracy", accuracy)
 
-        return loss
+    def configure_optimizers(self):
+        """
+        Configure the optimizer and learning rate scheduler.
+
+        Args:
+            self: the neural network instance
+
+        Returns:
+            The optimizer and the learning rate scheduler.
+        """
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": lr_scheduler,
+                "monitor": "train_loss",
+            },
+        }

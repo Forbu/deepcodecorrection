@@ -30,4 +30,8 @@ class NoiseDataset(Dataset):
         return self.lenght_epoch
 
     def __getitem__(self, idx):
-        return torch.randint(low=0, high=self.max_class, size=(self.dim_input,))
+
+        choosed_class = torch.randint(low=0, high=self.max_class, size=(self.dim_input,))
+
+
+        return choosed_class
