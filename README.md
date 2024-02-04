@@ -19,4 +19,16 @@ The idea is to use a discrete code representation couple with clever transformer
 
 The "noise" box represent the environment noise that can corrupt the transmitted data.
 
+## Experiences
+
+The first experiences is simple :
+
+Can you make an model that is just able to retrieve the information without any noise ?
+The result of the first training : 
+TODO add the image
+
+Then we decide to progressively add some noise to see if the transformer is able to create a proper error correcting code
+TODO the experience
+
+
 
