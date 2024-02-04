@@ -22,7 +22,8 @@ class PLTrainer(pl.LightningModule):
         nb_class,
         dim_global=32,
         coeff_code_rate=1.3,
-        noise_level=1.0,
+        noise_level=0.,
+        nb_codebook_size=8,
     ):
         super().__init__()
 
@@ -32,6 +33,7 @@ class PLTrainer(pl.LightningModule):
         self.dim_global = dim_global
         self.coeff_code_rate = coeff_code_rate
         self.noise_level = noise_level
+        self.nb_codebook_size = nb_codebook_size
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_global,
@@ -62,15 +64,34 @@ class PLTrainer(pl.LightningModule):
         # embedding for the actual input
         self.input_embedding_emitter = nn.Embedding(nb_class, dim_global)
 
+        nb_dim_canal = 2
+
         # FSQ
-        levels = [8]  # see 4.1 and A.4.1 in the paper
+        levels = [
+            nb_codebook_size // nb_dim_canal for _ in range(nb_dim_canal)
+        ]  # see 4.1 and A.4.1 in the paper
         self.quantizer = FSQ(levels)
 
-        self.vq = VectorQuantize(dim=1, codebook_size=8, freeze_codebook=True)
+        self.quantizer_after_noise = FSQ(levels)
+
+        # self.vq = VectorQuantize(
+        #     dim=nb_dim_canal,
+        #     codebook_size=nb_codebook_size // nb_dim_canal,
+        #     learnable_codebook=False,
+        # )
+
+        # print(self.vq._codebook.embed.shape)
+        # self.vq._codebook.embed[0, :, 0] = torch.linspace(
+        #     -1, 1, nb_codebook_size // nb_dim_canal
+        # )
+
+        # self.vq._codebook.embed[0, :, 1] = torch.linspace(
+        #     -1, 1, nb_codebook_size // nb_dim_canal
+        # )
 
         # three resizing components
-        self.resize_emitter = nn.Linear(dim_global, 1)
-        self.resize_receiver = nn.Linear(1, dim_global)
+        self.resize_emitter = nn.Linear(dim_global, nb_dim_canal)
+        self.resize_receiver = nn.Linear(nb_dim_canal, dim_global)
         self.resize_output = nn.Linear(dim_global, nb_class)
 
         self.criterion = nn.CrossEntropyLoss()
@@ -99,7 +120,8 @@ class PLTrainer(pl.LightningModule):
             coeff_code_rate: coefficient for code rate adjustment
 
         Returns:
-            output: tensor representing the output of the neural network (batch_size, seq_length, nb_class)
+            output: tensor representing the output of the neural network
+                    (batch_size, seq_length, nb_class)
         """
         assert coeff_code_rate > 1.0
 
@@ -146,27 +168,36 @@ class PLTrainer(pl.LightningModule):
         # resize to batch_size, dim_intermediate, 1
         transmitted_information = self.resize_emitter(transmitted_information)
 
+        # discretization with FSQ
+        # quantized, indices, commit_loss = self.vq(
+        #     noisy_transmitted_information, freeze_codebook=True
+        # )
+
+        quantized, indices = self.quantizer(transmitted_information)
+
         # adding noise
         noisy_transmitted_information = (
-            transmitted_information
-            + torch.randn_like(transmitted_information) * noise_level
+            quantized + torch.randn_like(quantized) * noise_level
         )
 
-        # discretization with FSQ
-        quantized, indices, commit_loss = self.vq(noisy_transmitted_information)
+        # quantized_after_noise, indices_after_noise = self.quantizer_after_noise(
+        #     noisy_transmitted_information
+        # )
+        quantized_after_noise = noisy_transmitted_information
 
-        if inference == False:
-            received_information_quant = noisy_transmitted_information
-        else:
-            received_information_quant = quantized
+        received_information_quant = quantized_after_noise
 
-            # compute difference between noisy quant and non noisy quantized
-            non_noisy_quant, non_noisy_indices, _ = self.vq(transmitted_information)
+        if inference:
+            print("quantized: ", quantized[0])
 
-            print(
-                "shuffle level validation: ",
-                (non_noisy_indices.long() == indices.long()).float().mean(),
-            )
+            # print(
+            #     "shuffle level validation: ",
+            #     (indices_after_noise.long() == indices.long()).float().mean(),
+            # )
+
+            # count the values in the non noisy quant
+            count_non_noisy = torch.bincount(indices.view(-1).long())
+            print("count_non_noisy: ", count_non_noisy)
 
         # resize to global dimension
         received_information = self.resize_receiver(received_information_quant)
@@ -180,7 +211,7 @@ class PLTrainer(pl.LightningModule):
         # final resizing to output logits
         output = self.resize_output(output)
 
-        return output[:, :seq_length, :], commit_loss
+        return output[:, :seq_length, :]
 
     def compute_loss(self, x, coeff_code_rate, noise_level, inference=False):
         """
@@ -193,9 +224,10 @@ class PLTrainer(pl.LightningModule):
 
         Returns:
             loss: loss value
-            output: tensor representing the output of the neural network (batch_size, seq_length, nb_class)
+            output: tensor representing the output of the neural network
+            (batch_size, seq_length, nb_class)
         """
-        output, commit_loss = self.forward(x, coeff_code_rate, noise_level, inference)
+        output = self.forward(x, coeff_code_rate, noise_level, inference)
 
         # loss (cross entropy)
         loss = self.criterion(output.permute(0, 2, 1), x)
@@ -203,7 +235,7 @@ class PLTrainer(pl.LightningModule):
         # accuracy
         accuracy = self.accuracy(output.permute(0, 2, 1), x)
 
-        return loss, commit_loss, output, accuracy
+        return loss, output, accuracy
 
     def training_step(self, batch, batch_idx):
         """
@@ -223,15 +255,12 @@ class PLTrainer(pl.LightningModule):
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, commit_loss, _, accuracy = self.compute_loss(
-            x, coeff_code_rate, self.noise_level
-        )
+        loss, _, accuracy = self.compute_loss(x, coeff_code_rate, self.noise_level)
 
         self.log("train_loss", loss)
         self.log("train_accuracy", accuracy)
-        self.log("commit_loss", commit_loss)
 
-        return loss + commit_loss / 15.0
+        return loss
 
     def validation_step(self, batch, batch_idx):
         """
@@ -244,6 +273,7 @@ class PLTrainer(pl.LightningModule):
         Returns:
             The loss value after the validation step.
         """
+        self.eval()
         x = batch
 
         batch_size, seq_lenght = x.shape
@@ -251,12 +281,13 @@ class PLTrainer(pl.LightningModule):
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, commit_loss, _, accuracy = self.compute_loss(
+        loss, _, accuracy = self.compute_loss(
             x, coeff_code_rate, self.noise_level, inference=True
         )
 
         self.log("val_loss", loss)
         self.log("val_accuracy", accuracy)
+        self.train()
 
     def configure_optimizers(self):
         """
@@ -268,13 +299,6 @@ class PLTrainer(pl.LightningModule):
         Returns:
             The optimizer and the learning rate scheduler.
         """
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
-        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=5e-4)
 
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": lr_scheduler,
-                "monitor": "train_loss",
-            },
-        }
+        return optimizer,

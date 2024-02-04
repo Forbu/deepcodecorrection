@@ -4,7 +4,6 @@ This module generate :
 - random noise injestion in bit values (flipping 0 / 1)
 """
 
-
 import torch
 
 # import dataset class

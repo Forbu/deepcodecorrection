@@ -17,8 +17,8 @@ from deepcodecorrection.data_generation import NoiseDataset
 torch.manual_seed(42)
 
 def main():
-    nb_class = 8
-    batch_size = 128
+    nb_class = 16
+    batch_size = 256
     # init dataset
     dataset = NoiseDataset(dim_input=100, lenght_epoch=20000, max_class=nb_class)
     dataset_val = NoiseDataset(dim_input=100, lenght_epoch=1000, max_class=nb_class)
@@ -35,7 +35,7 @@ def main():
 
     # train the model
     trainer = pl.Trainer(
-        max_epochs=100,
+        max_epochs=2000,
         accelerator="auto",
         devices=1,
         enable_checkpointing=False,
