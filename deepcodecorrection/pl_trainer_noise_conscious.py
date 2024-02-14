@@ -8,8 +8,10 @@ import lightning.pytorch as pl
 
 import torchmetrics
 
+
 from vector_quantize_pytorch import FSQ, VectorQuantize
 
+from deepcodecorrection.utils import MLP
 
 class PLTrainer(pl.LightningModule):
     """
@@ -22,7 +24,7 @@ class PLTrainer(pl.LightningModule):
         nb_class,
         dim_global=32,
         coeff_code_rate=1.3,
-        noise_level=0.,
+        noise_level=0.0,
         nb_codebook_size=8,
     ):
         super().__init__()
@@ -72,29 +74,18 @@ class PLTrainer(pl.LightningModule):
         ]  # see 4.1 and A.4.1 in the paper
         self.quantizer = FSQ(levels)
 
-        self.quantizer_after_noise = FSQ(levels)
-
-        # self.vq = VectorQuantize(
-        #     dim=nb_dim_canal,
-        #     codebook_size=nb_codebook_size // nb_dim_canal,
-        #     learnable_codebook=False,
-        # )
-
-        # print(self.vq._codebook.embed.shape)
-        # self.vq._codebook.embed[0, :, 0] = torch.linspace(
-        #     -1, 1, nb_codebook_size // nb_dim_canal
-        # )
-
-        # self.vq._codebook.embed[0, :, 1] = torch.linspace(
-        #     -1, 1, nb_codebook_size // nb_dim_canal
-        # )
+        # noise conscious MLP
+        self.noise_conscious = MLP(
+            in_dim=nb_dim_canal, out_dim=nb_dim_canal, hidden_dim=8
+        )
 
         # three resizing components
         self.resize_emitter = nn.Linear(dim_global, nb_dim_canal)
-        self.resize_receiver = nn.Linear(nb_dim_canal, dim_global)
+        self.resize_receiver = nn.Linear(nb_dim_canal * 2, dim_global)
         self.resize_output = nn.Linear(dim_global, nb_class)
 
         self.criterion = nn.CrossEntropyLoss()
+        self.mse_loss_noise = nn.MSELoss()
 
         # accuracy metric
         self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_class)
@@ -177,17 +168,12 @@ class PLTrainer(pl.LightningModule):
 
         quantized, indices = self.quantizer(transmitted_information)
 
+        noise = torch.randn_like(quantized) * noise_level
+
         # adding noise
-        noisy_transmitted_information = (
-            quantized + torch.randn_like(quantized) * noise_level
-        )
+        noisy_transmitted_information = quantized + noise
 
-        # quantized_after_noise, indices_after_noise = self.quantizer_after_noise(
-        #     noisy_transmitted_information
-        # )
-        quantized_after_noise = noisy_transmitted_information
-
-        received_information_quant = quantized_after_noise
+        received_information_quant = noisy_transmitted_information
 
         if inference:
             print("quantized: ", quantized[0])
@@ -204,8 +190,19 @@ class PLTrainer(pl.LightningModule):
             count_init_symbol = torch.bincount(init_symbol.view(-1).long())
             print("count_init_symbol: ", count_init_symbol)
 
+        # noise estimation
+        noise_estimate = self.noise_conscious(noisy_transmitted_information.detach())
+
+        # stop gradient
+        noise_estimate_stop_grad = noise_estimate.detach()
+
+        # now we concatenate the received information with the noise estimate
+        received_information = torch.cat(
+            [received_information_quant, noise_estimate_stop_grad], dim=2
+        )
+
         # resize to global dimension
-        received_information = self.resize_receiver(received_information_quant)
+        received_information = self.resize_receiver(received_information)
 
         # adding position embedding
         received_information = received_information + receiver_position
@@ -216,7 +213,7 @@ class PLTrainer(pl.LightningModule):
         # final resizing to output logits
         output = self.resize_output(output)
 
-        return output[:, :seq_length, :]
+        return output[:, :seq_length, :], (noise, noise_estimate)
 
     def compute_loss(self, x, coeff_code_rate, noise_level, inference=False):
         """
@@ -232,15 +229,20 @@ class PLTrainer(pl.LightningModule):
             output: tensor representing the output of the neural network
             (batch_size, seq_length, nb_class)
         """
-        output = self.forward(x, coeff_code_rate, noise_level, inference)
+        output, noise_info = self.forward(x, coeff_code_rate, noise_level, inference)
+
+        noise, noise_estimate = noise_info
 
         # loss (cross entropy)
         loss = self.criterion(output.permute(0, 2, 1), x)
 
+        # loss noise is mse
+        loss_noise = self.mse_loss_noise(noise, noise_estimate)
+
         # accuracy
         accuracy = self.accuracy(output.permute(0, 2, 1), x)
 
-        return loss, output, accuracy
+        return loss, loss_noise, output, accuracy
 
     def training_step(self, batch, batch_idx):
         """
@@ -255,17 +257,20 @@ class PLTrainer(pl.LightningModule):
         """
         x = batch
 
-        batch_size, seq_lenght = x.shape
+        batch_size, seq_length = x.shape
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, _, accuracy = self.compute_loss(x, coeff_code_rate, self.noise_level)
+        loss, loss_noise, _, accuracy = self.compute_loss(
+            x, coeff_code_rate, self.noise_level
+        )
 
         self.log("train_loss", loss)
         self.log("train_accuracy", accuracy)
+        self.log("train_loss_noise", loss_noise)
 
-        return loss
+        return loss + loss_noise
 
     def validation_step(self, batch, batch_idx):
         """
@@ -286,12 +291,14 @@ class PLTrainer(pl.LightningModule):
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, _, accuracy = self.compute_loss(
+        loss, loss_noise, _, accuracy = self.compute_loss(
             x, coeff_code_rate, self.noise_level, inference=True
         )
 
         self.log("val_loss", loss)
         self.log("val_accuracy", accuracy)
+        self.log("val_loss_noise", loss_noise)
+
         self.train()
 
     def configure_optimizers(self):
@@ -306,4 +313,4 @@ class PLTrainer(pl.LightningModule):
         """
         optimizer = torch.optim.AdamW(self.parameters(), lr=5e-4)
 
-        return optimizer,
+        return (optimizer,)
