@@ -22,7 +22,7 @@ class PLTrainer(pl.LightningModule):
         nb_class,
         dim_global=32,
         coeff_code_rate=1.3,
-        noise_level=0.,
+        noise_level=0.0,
         nb_codebook_size=8,
     ):
         super().__init__()
@@ -64,34 +64,11 @@ class PLTrainer(pl.LightningModule):
         # embedding for the actual input
         self.input_embedding_emitter = nn.Embedding(nb_class, dim_global)
 
-        nb_dim_canal = 2
-
-        # FSQ
-        levels = [
-            nb_codebook_size // nb_dim_canal for _ in range(nb_dim_canal)
-        ]  # see 4.1 and A.4.1 in the paper
-        self.quantizer = FSQ(levels)
-
-        self.quantizer_after_noise = FSQ(levels)
-
-        # self.vq = VectorQuantize(
-        #     dim=nb_dim_canal,
-        #     codebook_size=nb_codebook_size // nb_dim_canal,
-        #     learnable_codebook=False,
-        # )
-
-        # print(self.vq._codebook.embed.shape)
-        # self.vq._codebook.embed[0, :, 0] = torch.linspace(
-        #     -1, 1, nb_codebook_size // nb_dim_canal
-        # )
-
-        # self.vq._codebook.embed[0, :, 1] = torch.linspace(
-        #     -1, 1, nb_codebook_size // nb_dim_canal
-        # )
+        nb_dim_canal = 3
 
         # three resizing components
         self.resize_emitter = nn.Linear(dim_global, nb_dim_canal)
-        self.resize_receiver = nn.Linear(nb_dim_canal, dim_global)
+        self.resize_receiver = nn.Linear(nb_dim_canal-1, dim_global)
         self.resize_output = nn.Linear(dim_global, nb_class)
 
         self.criterion = nn.CrossEntropyLoss()
@@ -110,18 +87,22 @@ class PLTrainer(pl.LightningModule):
 
         self.apply(init_weights)
 
-    def forward(self, x, coeff_code_rate, noise_level, inference=False):
+    def encode(self, x, coeff_code_rate, noise_level, inference=False):
         """
-        Forward pass of the neural network model.
+        Encodes the input data with noise and quantization, and returns the received information,
+          receiver position, and sequence length.
 
-        Args:
-            self: the neural network instance
-            x: input tensor of shape (batch_size, seq_length)
-            coeff_code_rate: coefficient for code rate adjustment
+        Parameters:
+            x: Tensor - The input data to be encoded.
+            coeff_code_rate: float - The coefficient for code rate.
+            noise_level: float - The level of noise to be added.
+            inference: bool - Flag indicating whether the function is used for inference.
 
         Returns:
-            output: tensor representing the output of the neural network
-                    (batch_size, seq_length, nb_class)
+            received_information_quant: Tensor - The received information
+                                    after quantization and noise addition.
+            receiver_position: Tensor - The position of the receiver.
+            seq_length: int - The length of the sequence.
         """
         assert coeff_code_rate > 1.0
 
@@ -170,12 +151,12 @@ class PLTrainer(pl.LightningModule):
         # resize to batch_size, dim_intermediate, 1
         transmitted_information = self.resize_emitter(transmitted_information)
 
-        # discretization with FSQ
-        # quantized, indices, commit_loss = self.vq(
-        #     noisy_transmitted_information, freeze_codebook=True
-        # )
+        # only power normalization (discretization leads to instability)
+        quantized = transmitted_information / transmitted_information.norm(
+            dim=2, keepdim=True
+        ) * 1.1
 
-        quantized, indices = self.quantizer(transmitted_information)
+        quantized = quantized[:, :, :-1]
 
         # adding noise
         noisy_transmitted_information = (
@@ -190,19 +171,23 @@ class PLTrainer(pl.LightningModule):
         received_information_quant = quantized_after_noise
 
         if inference:
-            print("quantized: ", quantized[0])
-
-            # print(
-            #     "shuffle level validation: ",
-            #     (indices_after_noise.long() == indices.long()).float().mean(),
-            # )
-
-            # count the values in the non noisy quant
-            count_non_noisy = torch.bincount(indices.view(-1).long())
-            print("count_non_noisy: ", count_non_noisy)
-
             count_init_symbol = torch.bincount(init_symbol.view(-1).long())
             print("count_init_symbol: ", count_init_symbol)
+
+        return received_information_quant, receiver_position, seq_length
+
+    def decode(self, received_information_quant, receiver_position, seq_length):
+        """
+        Decode the received information by resizing to global dimension, adding position embedding,
+          applying receiver transformation, and resizing to output logits.
+
+        Parameters:
+            received_information_quant: input information to be decoded
+            receiver_position: position embedding for the receiver
+            seq_length: length of the output sequence
+        Returns:
+            output[:, :seq_length, :]: decoded output with specified sequence length
+        """
 
         # resize to global dimension
         received_information = self.resize_receiver(received_information_quant)
@@ -217,6 +202,28 @@ class PLTrainer(pl.LightningModule):
         output = self.resize_output(output)
 
         return output[:, :seq_length, :]
+
+    def forward(self, x, coeff_code_rate, noise_level, inference=False):
+        """
+        Forward pass of the neural network model.
+
+        Args:
+            self: the neural network instance
+            x: input tensor of shape (batch_size, seq_length)
+            coeff_code_rate: coefficient for code rate adjustment
+
+        Returns:
+            output: tensor representing the output of the neural network
+                    (batch_size, seq_length, nb_class)
+        """
+
+        received_information_quant, receiver_position, seq_length = self.encode(
+            x, coeff_code_rate, noise_level, inference
+        )
+
+        output = self.decode(received_information_quant, receiver_position, seq_length)
+
+        return output
 
     def compute_loss(self, x, coeff_code_rate, noise_level, inference=False):
         """
@@ -253,6 +260,7 @@ class PLTrainer(pl.LightningModule):
         Returns:
             The loss value after the training step.
         """
+
         x = batch
 
         batch_size, seq_lenght = x.shape
@@ -264,7 +272,6 @@ class PLTrainer(pl.LightningModule):
 
         self.log("train_loss", loss)
         self.log("train_accuracy", accuracy)
-
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -298,12 +305,16 @@ class PLTrainer(pl.LightningModule):
         """
         Configure the optimizer and learning rate scheduler.
 
+        We separate the learning for the encoder and the decoder.
+        We want a very low learning rate for the encoder (x10 for the decoder).
+
         Args:
             self: the neural network instance
 
         Returns:
             The optimizer and the learning rate scheduler.
         """
-        optimizer = torch.optim.AdamW(self.parameters(), lr=5e-4)
 
-        return optimizer,
+        optimizer_all = torch.optim.AdamW(self.parameters(), lr=5e-4)
+
+        return (optimizer_all,)

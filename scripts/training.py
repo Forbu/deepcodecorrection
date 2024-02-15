@@ -14,7 +14,7 @@ import torchmetrics
 from lightning.pytorch.loggers import TensorBoardLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 
-from deepcodecorrection.pl_trainer_noise_conscious import PLTrainer
+from deepcodecorrection.pl_trainer import PLTrainer
 from deepcodecorrection.data_generation import NoiseDataset
 
 # seed for reproducibility
@@ -58,11 +58,13 @@ def main():
         max_dim_input=250,
         nb_class=nb_class,
         dim_global=32,
+        noise_level=0.1,
     )
 
     # last_checkpoint = load_last_checkpoint("/home/checkpoints")
 
     # print(last_checkpoint)
+    # last_checkpoint = "/home/checkpoints/my_model-epoch=61-val_loss=0.05.ckpt"
 
     # model = PLTrainer.load_from_checkpoint(
     #     last_checkpoint,
@@ -71,6 +73,7 @@ def main():
     #     dim_global=32,
     #     noise_level=0.1
     # )
+
 
     logger = TensorBoardLogger("tb_logs", name="my_model")
 
