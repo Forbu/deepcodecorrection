@@ -1,7 +1,7 @@
 """
 Module for training with PyTorch Lightning
 """
-
+import math
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
@@ -43,6 +43,7 @@ class PLTrainer(pl.LightningModule):
         )
 
         self.emitter_transformer = nn.TransformerEncoder(encoder_layer, num_layers=6)
+        self.emitter_transformer = torch.compile(self.emitter_transformer)
 
         decoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_global,
@@ -52,6 +53,7 @@ class PLTrainer(pl.LightningModule):
         )
 
         self.receiver_transformer = nn.TransformerEncoder(decoder_layer, num_layers=6)
+        self.receiver_transformer = torch.compile(self.receiver_transformer)
 
         # embedding for the position
         self.position_embedding_encoder_emitter = nn.Embedding(
@@ -68,7 +70,7 @@ class PLTrainer(pl.LightningModule):
 
         # three resizing components
         self.resize_emitter = nn.Linear(dim_global, nb_dim_canal)
-        self.resize_receiver = nn.Linear(nb_dim_canal-1, dim_global)
+        self.resize_receiver = nn.Linear(nb_dim_canal - 1, dim_global)
         self.resize_output = nn.Linear(dim_global, nb_class)
 
         self.criterion = nn.CrossEntropyLoss()
@@ -152,9 +154,10 @@ class PLTrainer(pl.LightningModule):
         transmitted_information = self.resize_emitter(transmitted_information)
 
         # only power normalization (discretization leads to instability)
-        quantized = transmitted_information / transmitted_information.norm(
-            dim=2, keepdim=True
-        ) * 1.1
+        quantized = (
+            transmitted_information
+            / transmitted_information.norm(dim=2, keepdim=True) * 1.41
+        )
 
         quantized = quantized[:, :, :-1]
 
@@ -201,7 +204,7 @@ class PLTrainer(pl.LightningModule):
         # final resizing to output logits
         output = self.resize_output(output)
 
-        return output[:, :seq_length, :]
+        return output[:, :seq_length, :], received_information_quant
 
     def forward(self, x, coeff_code_rate, noise_level, inference=False):
         """
@@ -221,9 +224,11 @@ class PLTrainer(pl.LightningModule):
             x, coeff_code_rate, noise_level, inference
         )
 
-        output = self.decode(received_information_quant, receiver_position, seq_length)
+        output, received_information_quant = self.decode(
+            received_information_quant, receiver_position, seq_length
+        )
 
-        return output
+        return output, received_information_quant
 
     def compute_loss(self, x, coeff_code_rate, noise_level, inference=False):
         """
@@ -239,7 +244,9 @@ class PLTrainer(pl.LightningModule):
             output: tensor representing the output of the neural network
             (batch_size, seq_length, nb_class)
         """
-        output = self.forward(x, coeff_code_rate, noise_level, inference)
+        output, quantized_value = self.forward(
+            x, coeff_code_rate, noise_level, inference
+        )
 
         # loss (cross entropy)
         loss = self.criterion(output.permute(0, 2, 1), x)
@@ -247,7 +254,7 @@ class PLTrainer(pl.LightningModule):
         # accuracy
         accuracy = self.accuracy(output.permute(0, 2, 1), x)
 
-        return loss, output, accuracy
+        return loss, quantized_value, accuracy
 
     def training_step(self, batch, batch_idx):
         """
@@ -293,13 +300,45 @@ class PLTrainer(pl.LightningModule):
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, _, accuracy = self.compute_loss(
+        loss, quantized_value, accuracy = self.compute_loss(
             x, coeff_code_rate, self.noise_level, inference=True
         )
 
         self.log("val_loss", loss)
         self.log("val_accuracy", accuracy)
+
+        # we take a look at the quantize value
+        quantized_value = quantized_value.view(-1, quantized_value.shape[-1])
+        quantized_value = quantized_value.detach().cpu().numpy()
+
+        # we plot the quantized value
+        self.plot_quantized_value(quantized_value)
+
         self.train()
+
+    def plot_quantized_value(self, quantized_value):
+        """
+        Plot the quantized value.
+
+        Args:
+            quantized_value: the quantized value
+        """
+        import matplotlib.pyplot as plt
+
+        # plot all the value in the quantized value (nb_point, 2)
+        plt.scatter(quantized_value[:500, 0], quantized_value[:500, 1])
+
+        # plot the quantized value
+        plt.savefig("quantized_value.png")
+        plt.close()
+
+        # we take only the first graph
+        img = plt.imread("quantized_value.png")[:, :, :3]
+        img = img.transpose((2, 0, 1))
+
+
+        # log image
+        self.logger.experiment.add_image("quantized_value", img, self.current_epoch)
 
     def configure_optimizers(self):
         """

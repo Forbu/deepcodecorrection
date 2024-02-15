@@ -23,12 +23,14 @@ The "noise" box represent the environment noise that can corrupt the transmitted
 
 The first experiences is simple :
 
-Can you make an model that is just able to retrieve the information without any noise ?
+Can you make an model that is just able to retrieve the information without any noise but with a discretization layer ?
 The result of the first training : 
-TODO add the image
+The answer is (obviously) yes but it takes some times
 
-Then we decide to progressively add some noise to see if the transformer is able to create a proper error correcting code
-TODO the experience
+But if we add (channel) noise after the discretization part it leads to instability (no convergence) :
 
+
+And if instead of a discretization layer we add a normalized one (corresponding to power normalization), we obtain better resulting convergence :
+TODO plot
 
 

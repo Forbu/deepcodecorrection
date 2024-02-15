@@ -17,9 +17,11 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from deepcodecorrection.pl_trainer import PLTrainer
 from deepcodecorrection.data_generation import NoiseDataset
 
-# seed for reproducibility
-torch.manual_seed(42)
+# # seed for reproducibility
+# torch.manual_seed(42)
 
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
 def load_last_checkpoint(directory):
     """
@@ -59,7 +61,11 @@ def main():
         nb_class=nb_class,
         dim_global=32,
         noise_level=0.1,
+        coeff_code_rate=1.3
     )
+
+    # compile the model
+    # model = torch.compile(model)
 
     # last_checkpoint = load_last_checkpoint("/home/checkpoints")
 

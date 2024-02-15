@@ -13,6 +13,7 @@ from vector_quantize_pytorch import FSQ, VectorQuantize
 
 from deepcodecorrection.utils import MLP
 
+
 class PLTrainer(pl.LightningModule):
     """
     Class for training with PyTorch Lightning
@@ -171,17 +172,12 @@ class PLTrainer(pl.LightningModule):
         noise = torch.randn_like(quantized) * noise_level
 
         # adding noise
-        noisy_transmitted_information = quantized + noise
+        #noisy_transmitted_information = quantized + noise
+        noisy_transmitted_information = transmitted_information + noise
 
         received_information_quant = noisy_transmitted_information
 
         if inference:
-            print("quantized: ", quantized[0])
-
-            # print(
-            #     "shuffle level validation: ",
-            #     (indices_after_noise.long() == indices.long()).float().mean(),
-            # )
 
             # count the values in the non noisy quant
             count_non_noisy = torch.bincount(indices.view(-1).long())
@@ -270,7 +266,7 @@ class PLTrainer(pl.LightningModule):
         self.log("train_accuracy", accuracy)
         self.log("train_loss_noise", loss_noise)
 
-        return loss + loss_noise
+        return loss #+ loss_noise
 
     def validation_step(self, batch, batch_idx):
         """
