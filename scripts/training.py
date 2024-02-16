@@ -61,7 +61,7 @@ def main():
         nb_class=nb_class,
         dim_global=32,
         noise_level=0.1,
-        coeff_code_rate=1.3
+        coeff_code_rate=1.02
     )
 
     # compile the model
@@ -81,7 +81,7 @@ def main():
     # )
 
 
-    logger = TensorBoardLogger("tb_logs", name="my_model")
+    logger = TensorBoardLogger("tb_logs", name="my_model_noadd_v2")
 
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints",

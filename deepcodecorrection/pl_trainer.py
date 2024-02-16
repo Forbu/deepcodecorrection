@@ -156,7 +156,8 @@ class PLTrainer(pl.LightningModule):
         # only power normalization (discretization leads to instability)
         quantized = (
             transmitted_information
-            / transmitted_information.norm(dim=2, keepdim=True) * 1.41
+            / transmitted_information.norm(dim=2, keepdim=True)
+            * 1.41
         )
 
         quantized = quantized[:, :, :-1]
@@ -328,14 +329,15 @@ class PLTrainer(pl.LightningModule):
         # plot all the value in the quantized value (nb_point, 2)
         plt.scatter(quantized_value[:500, 0], quantized_value[:500, 1])
 
+        path_name_image = "quantized_value_noadd.png"
+
         # plot the quantized value
-        plt.savefig("quantized_value.png")
+        plt.savefig(path_name_image)
         plt.close()
 
         # we take only the first graph
-        img = plt.imread("quantized_value.png")[:, :, :3]
+        img = plt.imread(path_name_image)[:, :, :3]
         img = img.transpose((2, 0, 1))
-
 
         # log image
         self.logger.experiment.add_image("quantized_value", img, self.current_epoch)
