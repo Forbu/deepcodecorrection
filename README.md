@@ -26,15 +26,17 @@ The first experiences is simple :
 
 Can you make an model that is just able to retrieve the information without any noise but with a discretization layer ?
 The result of the first training : 
-The answer is (obviously) yes but it takes some times
+The answer is (obviously) yes but it takes some times :
+
+
 
 But if we add (channel) noise after the discretization part it leads to instability (no convergence) :
 
-![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/02ad982c-481d-430c-abf3-0c2f1f5ab7ce)
 
 
 
 And if instead of a discretization layer we add a normalized one (corresponding to power normalization), we obtain better resulting convergence :
-TODO plot
+
+![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/45014458-1919-45b9-b4a2-0b439b9f309d)
 
 
