@@ -46,6 +46,13 @@ We observe that an implicit modulation :
 
 ![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/a2ee4d1d-9d18-4f2f-b253-d5668016b7b3)
 
+## The global neural architecture 
+
+The global neural architecture is represented here :
+
+![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/f77b0559-3930-4fbe-a0f2-7069ac2385e7)
+
+
 
 
 
