@@ -28,11 +28,11 @@ Can you make an model that is just able to retrieve the information without any 
 The result of the first training : 
 The answer is (obviously) yes but it takes some times :
 
-
+![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/ec3630a7-ad4f-4e90-8eb0-ca3935a222c1)
 
 But if we add (channel) noise after the discretization part it leads to instability (no convergence) :
 
-
+![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/5d22f5c9-8050-47ff-a6e8-89da503dc5af)
 
 
 And if instead of a discretization layer we add a normalized one (corresponding to power normalization), we obtain better resulting convergence :
