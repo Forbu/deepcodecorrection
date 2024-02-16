@@ -40,6 +40,8 @@ And if instead of a discretization layer we add a normalized one (corresponding 
 ![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/45014458-1919-45b9-b4a2-0b439b9f309d)
 
 
+R being the code rate.
+
 We observe that an implicit modulation :
 
 ![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/a2ee4d1d-9d18-4f2f-b253-d5668016b7b3)
