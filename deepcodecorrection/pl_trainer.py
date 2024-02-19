@@ -7,9 +7,7 @@ import torch.nn as nn
 import lightning.pytorch as pl
 
 import torchmetrics
-
-from vector_quantize_pytorch import FSQ, VectorQuantize
-
+import matplotlib.pyplot as plt
 
 class PLTrainer(pl.LightningModule):
     """
@@ -157,7 +155,7 @@ class PLTrainer(pl.LightningModule):
         quantized = (
             transmitted_information
             / transmitted_information.norm(dim=2, keepdim=True)
-            * 1.41
+            * 1.41 # sqrt(2)
         )
 
         quantized = quantized[:, :, :-1]
@@ -324,7 +322,7 @@ class PLTrainer(pl.LightningModule):
         Args:
             quantized_value: the quantized value
         """
-        import matplotlib.pyplot as plt
+        
 
         # plot all the value in the quantized value (nb_point, 2)
         plt.scatter(quantized_value[:500, 0], quantized_value[:500, 1])
