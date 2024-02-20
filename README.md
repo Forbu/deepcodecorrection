@@ -16,7 +16,7 @@ One can exploit the powerful tools that is deep learning to try to create a prop
 
 The idea is to use a discrete code representation couple with clever transformer (permutation invariant architecture) to try to reproduce the performance of classic error correction code.
 
-![Screenshot 2024-02-15 at 18 52 37](https://github.com/Forbu/deepcodecorrection/assets/11457947/7d07ebac-a6bb-4ab2-a044-fd1da1375a4e)
+![Screenshot 2024-02-15 at 18 52 37](images/shem1.png)
 
 The "noise" box represent the environment noise that can corrupt the transmitted data.
 
@@ -28,29 +28,29 @@ Can you make an model that is just able to retrieve the information without any 
 The result of the first training : 
 The answer is (obviously) yes but it takes some times :
 
-![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/ec3630a7-ad4f-4e90-8eb0-ca3935a222c1)
+![image](images/shem2.png)
 
 But if we add (channel) noise after the discretization part it leads to instability (no convergence) :
 
-![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/5d22f5c9-8050-47ff-a6e8-89da503dc5af)
+![image](images/shem4.png)
 
 
 And if instead of a discretization layer we add a normalized one (corresponding to power normalization), we obtain better resulting convergence :
 
-![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/45014458-1919-45b9-b4a2-0b439b9f309d)
+![image](images/schem5.png)
 
 
 R being the code rate.
 
 We observe that an implicit modulation :
 
-![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/a2ee4d1d-9d18-4f2f-b253-d5668016b7b3)
+![image](images/schem6.png)
 
 ## The global neural architecture 
 
 The global neural architecture is represented here :
 
-![image](https://github.com/Forbu/deepcodecorrection/assets/11457947/f77b0559-3930-4fbe-a0f2-7069ac2385e7)
+![image](images/schem8.png)
 
 
 
