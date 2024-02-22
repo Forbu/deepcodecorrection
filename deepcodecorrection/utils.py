@@ -50,3 +50,19 @@ class MLP(nn.Module):
         Simple forward pass
         """
         return self.model(vector)
+
+
+import random
+import string
+
+def generate_random_string(length):
+    """
+    Generate a random string of a specified length.
+
+    :param length: The length of the random string to be generated.
+    :type length: int
+    :return: The randomly generated string.
+    :rtype: str
+    """
+    letters = string.ascii_letters
+    return ''.join(random.choice(letters) for _ in range(length))

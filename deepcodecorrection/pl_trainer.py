@@ -9,6 +9,11 @@ import lightning.pytorch as pl
 import torchmetrics
 import matplotlib.pyplot as plt
 
+from deepcodecorrection.utils import generate_random_string
+
+torch.set_float32_matmul_precision("high")
+
+
 class PLTrainer(pl.LightningModule):
     """
     Class for training with PyTorch Lightning
@@ -32,6 +37,10 @@ class PLTrainer(pl.LightningModule):
         self.coeff_code_rate = coeff_code_rate
         self.noise_level = noise_level
         self.nb_codebook_size = nb_codebook_size
+
+        self.nb_bit = math.ceil(math.log2(nb_class))
+
+        self.random_string = generate_random_string(10)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=dim_global,
@@ -64,17 +73,17 @@ class PLTrainer(pl.LightningModule):
         # embedding for the actual input
         self.input_embedding_emitter = nn.Embedding(nb_class, dim_global)
 
-        nb_dim_canal = 3
+        nb_dim_canal = 2
 
         # three resizing components
         self.resize_emitter = nn.Linear(dim_global, nb_dim_canal)
-        self.resize_receiver = nn.Linear(nb_dim_canal - 1, dim_global)
-        self.resize_output = nn.Linear(dim_global, nb_class)
+        self.resize_receiver = nn.Linear(nb_dim_canal, dim_global)
+        self.resize_output = nn.Linear(dim_global, self.nb_bit)
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.BCEWithLogitsLoss()
 
         # accuracy metric
-        self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=nb_class)
+        self.accuracy = torchmetrics.Accuracy(task="binary")
 
         # init the whole model
         def init_weights(m):
@@ -152,13 +161,15 @@ class PLTrainer(pl.LightningModule):
         transmitted_information = self.resize_emitter(transmitted_information)
 
         # only power normalization (discretization leads to instability)
-        quantized = (
-            transmitted_information
-            / transmitted_information.norm(dim=2, keepdim=True)
-            * 1.41 # sqrt(2)
+        quantized = transmitted_information / torch.sqrt(
+            (transmitted_information.norm(dim=2, keepdim=True, p=2) ** 2).mean(
+                dim=1, keepdim=True
+            )
         )
 
-        quantized = quantized[:, :, :-1]
+        # print("power per batch element :", quantized)
+
+        # quantized = quantized[:, :, :-1]
 
         # adding noise
         noisy_transmitted_information = (
@@ -172,9 +183,9 @@ class PLTrainer(pl.LightningModule):
 
         received_information_quant = quantized_after_noise
 
-        if inference:
-            count_init_symbol = torch.bincount(init_symbol.view(-1).long())
-            print("count_init_symbol: ", count_init_symbol)
+        # if inference:
+        #     count_init_symbol = torch.bincount(init_symbol.view(-1).long())
+        #     print("count_init_symbol: ", count_init_symbol)
 
         return received_information_quant, receiver_position, seq_length
 
@@ -229,7 +240,9 @@ class PLTrainer(pl.LightningModule):
 
         return output, received_information_quant
 
-    def compute_loss(self, x, coeff_code_rate, noise_level, inference=False):
+    def compute_loss(
+        self, x, coeff_code_rate, noise_level, bit_corresponding, inference=False
+    ):
         """
         Compute the loss function.
 
@@ -248,10 +261,10 @@ class PLTrainer(pl.LightningModule):
         )
 
         # loss (cross entropy)
-        loss = self.criterion(output.permute(0, 2, 1), x)
+        loss = self.criterion(output, bit_corresponding)
 
         # accuracy
-        accuracy = self.accuracy(output.permute(0, 2, 1), x)
+        accuracy = self.accuracy(output, bit_corresponding)
 
         return loss, quantized_value, accuracy
 
@@ -267,14 +280,16 @@ class PLTrainer(pl.LightningModule):
             The loss value after the training step.
         """
 
-        x = batch
+        x, bit_corresponding = batch
 
         batch_size, seq_lenght = x.shape
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
-        loss, _, accuracy = self.compute_loss(x, coeff_code_rate, self.noise_level)
+        loss, _, accuracy = self.compute_loss(
+            x, coeff_code_rate, self.noise_level, bit_corresponding
+        )
 
         self.log("train_loss", loss)
         self.log("train_accuracy", accuracy)
@@ -292,7 +307,7 @@ class PLTrainer(pl.LightningModule):
             The loss value after the validation step.
         """
         self.eval()
-        x = batch
+        x, bit_corresponding = batch
 
         batch_size, seq_lenght = x.shape
 
@@ -300,7 +315,7 @@ class PLTrainer(pl.LightningModule):
         coeff_code_rate = self.coeff_code_rate
 
         loss, quantized_value, accuracy = self.compute_loss(
-            x, coeff_code_rate, self.noise_level, inference=True
+            x, coeff_code_rate, self.noise_level, bit_corresponding, inference=True
         )
 
         self.log("val_loss", loss)
@@ -322,12 +337,11 @@ class PLTrainer(pl.LightningModule):
         Args:
             quantized_value: the quantized value
         """
-        
 
         # plot all the value in the quantized value (nb_point, 2)
         plt.scatter(quantized_value[:500, 0], quantized_value[:500, 1])
 
-        path_name_image = "quantized_value_noadd.png"
+        path_name_image = "/home/images/" + self.random_string + ".png"
 
         # plot the quantized value
         plt.savefig(path_name_image)
