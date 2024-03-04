@@ -61,7 +61,7 @@ def main(args):
 
     nb_effective_transmitted_symbol = int(args.code_rate * args.dim_input_global)
 
-    batch_size = 256
+    batch_size = 1024
     # init dataset
     dataset = NoiseDataset(
         dim_input=nb_effective_transmitted_symbol,
@@ -93,13 +93,12 @@ def main(args):
     print("snr per bit : ", snr_per_bit)
     print("shannon limit : ", args.dim_input_global * np.log2(1 + snr))
 
-
     # we choose the name according to the SNR and code rate
-    name_model = f"deepcode_SNR_{snr_db}_code_rate_{math.trunc(args.code_rate, 4)}_bit_{bit_per_class}"
+    name_model = f"deepcode_SNR_{snr_db}_code_rate_{round(args.code_rate, 4)}_bit_{bit_per_class}"
 
     # init trainer
     model = PLTrainer(
-        max_dim_input=250,
+        max_dim_input=args.dim_input_global,
         nb_class=nb_class,
         dim_global=32,
         noise_level=noise_level,
@@ -139,7 +138,7 @@ def main(args):
         accelerator="auto",
         devices=1,
         logger=logger,
-        gradient_clip_val=0.5,
+        gradient_clip_val=2.,
         callbacks=[checkpoint_callback],
         accumulate_grad_batches=10,
         log_every_n_steps=5,
@@ -160,13 +159,13 @@ if __name__ == "__main__":
     parser.add_argument("--SNR", type=float, default=0.0)
 
     # 2 code rate
-    parser.add_argument("--code_rate", type=float, default=100.0 / 225.0)
+    parser.add_argument("--code_rate", type=float, default=64. / 128.)
 
     # 3 dim_input of the model
-    parser.add_argument("--dim_input_global", type=int, default=100)
+    parser.add_argument("--dim_input_global", type=int, default=16)
 
     # 4 nb of symbols
-    parser.add_argument("--nb_symbols", type=int, default=4)
+    parser.add_argument("--nb_symbols", type=int, default=2)
 
     args = parser.parse_args()
 

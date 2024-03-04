@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 
 from deepcodecorrection.utils import generate_random_string
 
+from linear_attention_transformer import LinearAttentionTransformer
+
 torch.set_float32_matmul_precision("high")
 
 
@@ -27,6 +29,7 @@ class PLTrainer(pl.LightningModule):
         coeff_code_rate=1.3,
         noise_level=0.0,
         nb_codebook_size=8,
+        nb_lenght_bit=16,
     ):
         super().__init__()
 
@@ -37,30 +40,52 @@ class PLTrainer(pl.LightningModule):
         self.coeff_code_rate = coeff_code_rate
         self.noise_level = noise_level
         self.nb_codebook_size = nb_codebook_size
+        self.nb_lenght_bit = nb_lenght_bit
 
         self.nb_bit = math.ceil(math.log2(nb_class))
 
         self.random_string = generate_random_string(10)
 
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=dim_global,
-            nhead=8,
-            dim_feedforward=dim_global * 4,
-            batch_first=True,
+        # ## encoder
+        # encoder_layer = nn.TransformerEncoderLayer(
+        #     d_model=dim_global,
+        #     nhead=1,
+        #     dim_feedforward=dim_global * 4,
+        #     batch_first=True,
+        # )
+
+        # self.emitter_transformer = nn.TransformerEncoder(encoder_layer, num_layers=6)
+        # self.emitter_transformer = torch.compile(self.emitter_transformer)
+
+        self.emitter_transformer = LinearAttentionTransformer(
+            dim=dim_global,
+            heads=1,
+            depth=6,
+            max_seq_len=8192 // 16,
+            n_local_attn_heads=1,
+            local_attn_window_size=16,
         )
 
-        self.emitter_transformer = nn.TransformerEncoder(encoder_layer, num_layers=6)
-        self.emitter_transformer = torch.compile(self.emitter_transformer)
+        # decoder layer
 
-        decoder_layer = nn.TransformerEncoderLayer(
-            d_model=dim_global,
-            nhead=8,
-            dim_feedforward=dim_global * 4,
-            batch_first=True,
+        # decoder_layer = nn.TransformerEncoderLayer(
+        #     d_model=dim_global,
+        #     nhead=1,
+        #     dim_feedforward=dim_global * 4,
+        #     batch_first=True,
+        # )
+
+        # self.receiver_transformer = nn.TransformerEncoder(decoder_layer, num_layers=6)
+        # self.receiver_transformer = torch.compile(self.receiver_transformer)
+
+        self.receiver_transformer = LinearAttentionTransformer(
+            dim=dim_global,
+            heads=1,
+            depth=6,
+            max_seq_len=8192 // 16,
+            n_local_attn_heads=1,
+            local_attn_window_size=16,
         )
-
-        self.receiver_transformer = nn.TransformerEncoder(decoder_layer, num_layers=6)
-        self.receiver_transformer = torch.compile(self.receiver_transformer)
 
         # embedding for the position
         self.position_embedding_encoder_emitter = nn.Embedding(
@@ -73,11 +98,11 @@ class PLTrainer(pl.LightningModule):
         # embedding for the actual input
         self.input_embedding_emitter = nn.Embedding(nb_class, dim_global)
 
-        nb_dim_canal = 2
+        nb_dim_canal = 3
 
         # three resizing components
         self.resize_emitter = nn.Linear(dim_global, nb_dim_canal)
-        self.resize_receiver = nn.Linear(nb_dim_canal, dim_global)
+        self.resize_receiver = nn.Linear(nb_dim_canal - 1, dim_global)
         self.resize_output = nn.Linear(dim_global, self.nb_bit)
 
         self.criterion = nn.BCEWithLogitsLoss()
@@ -89,7 +114,7 @@ class PLTrainer(pl.LightningModule):
         def init_weights(m):
             if isinstance(m, nn.Linear):
                 torch.nn.init.xavier_uniform_(m.weight)
-                m.bias.data.fill_(0.01)
+                # m.bias.data.fill_(0.01)
 
             if isinstance(m, nn.Embedding):
                 torch.nn.init.xavier_uniform_(m.weight)
@@ -116,11 +141,8 @@ class PLTrainer(pl.LightningModule):
         assert coeff_code_rate > 1.0
 
         batch_size, seq_length = x.shape
-        dim_intermediate = int(seq_length * coeff_code_rate)
-
+        dim_intermediate = self.self.nb_lenght_bit
         assert dim_intermediate < self.max_dim_input
-
-        init_symbol = x.clone()
 
         # generate embedding for the input
         x = self.input_embedding_emitter(x)  # batch_size, seq_length, dim_global
@@ -161,15 +183,22 @@ class PLTrainer(pl.LightningModule):
         transmitted_information = self.resize_emitter(transmitted_information)
 
         # only power normalization (discretization leads to instability)
-        quantized = transmitted_information / torch.sqrt(
-            (transmitted_information.norm(dim=2, keepdim=True, p=2) ** 2).mean(
-                dim=1, keepdim=True
-            )
+        # we impose that the mean of power of transmitted symbol is 1
+
+        # global power normalization
+        # quantized = transmitted_information / torch.sqrt(
+        #     (transmitted_information.norm(dim=2, keepdim=True, p=2) ** 2).mean(
+        #         dim=1, keepdim=True
+        #     )
+        # )
+
+        quantized = transmitted_information / transmitted_information.norm(
+            dim=2, keepdim=True, p=2
         )
 
         # print("power per batch element :", quantized)
 
-        # quantized = quantized[:, :, :-1]
+        quantized = quantized[:, :, :-1]
 
         # adding noise
         noisy_transmitted_information = (
