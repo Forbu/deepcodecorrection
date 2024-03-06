@@ -141,7 +141,7 @@ class PLTrainer(pl.LightningModule):
         assert coeff_code_rate > 1.0
 
         batch_size, seq_length = x.shape
-        dim_intermediate = self.self.nb_lenght_bit
+        dim_intermediate = self.nb_lenght_bit
         assert dim_intermediate < self.max_dim_input
 
         # generate embedding for the input

@@ -98,11 +98,12 @@ def main(args):
 
     # init trainer
     model = PLTrainer(
-        max_dim_input=args.dim_input_global,
+        max_dim_input=250,
         nb_class=nb_class,
         dim_global=32,
         noise_level=noise_level,
         coeff_code_rate=coeff_code_rate,
+        nb_lenght_bit=args.dim_input_global,
     )
 
     # compile the model
