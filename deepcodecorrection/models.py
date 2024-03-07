@@ -216,7 +216,7 @@ class GPT(nn.Module):
         b, l, d = x.size()
 
         batch_attention_mask = self.attention_mask[:l, :l].to(device)
-        batch_attention_mask = batch_attention_mask.repeat(b, 1, 1)
+        batch_attention_mask = batch_attention_mask.repeat(b, self.config.n_head, 1, 1)
 
         for block in self.transformer.h:
             x = block(x, attn_mask=batch_attention_mask)
