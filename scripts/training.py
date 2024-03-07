@@ -83,11 +83,8 @@ def main(args):
     # snr per bit
     snr_per_bit = snr / bit_per_class
 
-    # code rate
-    coeff_code_rate = 1.0 / args.code_rate
-
     print("noise level : ", noise_level)
-    print("coeff code rate : ", coeff_code_rate)
+    print("code rate : ", args.code_rate)
     print("nb_effective_transmitted_symbol : ", nb_effective_transmitted_symbol)
     print("snr : ", snr)
     print("snr per bit : ", snr_per_bit)
@@ -98,12 +95,12 @@ def main(args):
 
     # init trainer
     model = PLTrainer(
-        max_dim_input=250,
+        max_dim_input=300,
         nb_class=nb_class,
         dim_global=32,
         noise_level=noise_level,
-        coeff_code_rate=coeff_code_rate,
-        nb_lenght_bit=args.dim_input_global,
+        coeff_code_rate=args.code_rate,
+        dim_global_block=args.dim_input_global,
     )
 
     # compile the model

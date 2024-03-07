@@ -26,10 +26,11 @@ class PLTrainer(pl.LightningModule):
         max_dim_input,
         nb_class,
         dim_global=32,
-        coeff_code_rate=1.3,
+        coeff_code_rate=5.0 / 16.0,
         noise_level=0.0,
         nb_codebook_size=8,
-        nb_lenght_bit=16,
+        dim_global_block=16,
+        nb_block_size=16,
     ):
         super().__init__()
 
@@ -40,11 +41,36 @@ class PLTrainer(pl.LightningModule):
         self.coeff_code_rate = coeff_code_rate
         self.noise_level = noise_level
         self.nb_codebook_size = nb_codebook_size
-        self.nb_lenght_bit = nb_lenght_bit
+        self.dim_global_block = dim_global_block
+        self.nb_block_size = nb_block_size
 
         self.nb_bit = math.ceil(math.log2(nb_class))
 
         self.random_string = generate_random_string(10)
+
+        # block analysis
+        # check if dim_global_block / nb_block_size is an integer
+        assert self.dim_global_block % self.nb_block_size == 0, (
+            "dim_global_block must be a multiple of nb_block_size"
+            + str(self.nb_block_size)
+            + " != "
+            + str(self.dim_global_block)
+        )
+
+        # also check if coeff_code_rate * nb_block_size is an integer
+        assert (
+            self.coeff_code_rate * self.nb_block_size % 1 == 0
+        ), "coeff_code_rate * nb_block_size must be an integer"
+
+        nb_true_bit_per_block = math.ceil(coeff_code_rate * nb_block_size)
+
+        # we compute the index of the block for the true bit to be transfert
+        index_block = torch.arange(dim_global_block)
+        true_block = index_block % nb_block_size
+        true_block = true_block <= nb_true_bit_per_block - 1
+
+        self.index_true_symbol = index_block[true_block]
+        self.index_added_symbol = index_block[~true_block]
 
         # ## encoder
         # encoder_layer = nn.TransformerEncoderLayer(
@@ -138,28 +164,26 @@ class PLTrainer(pl.LightningModule):
             receiver_position: Tensor - The position of the receiver.
             seq_length: int - The length of the sequence.
         """
-        assert coeff_code_rate > 1.0
+        assert coeff_code_rate <= 1.0
 
         batch_size, seq_length = x.shape
-        dim_intermediate = self.nb_lenght_bit
-        assert dim_intermediate < self.max_dim_input
+        dim_global_block = self.dim_global_block
+        assert dim_global_block < self.max_dim_input
 
         # generate embedding for the input
         x = self.input_embedding_emitter(x)  # batch_size, seq_length, dim_global
 
-        # pad with zeros to obtain dimension of batch_size, dim_intermediate, dim_global
-        x = torch.cat(
-            [
-                x,
-                torch.zeros(
-                    batch_size, dim_intermediate - seq_length, self.dim_global
-                ).to(x.device),
-            ],
-            dim=1,
+        # we create the interleave input
+        input_init = torch.zeros(batch_size, dim_global_block, self.dim_global).to(
+            x.device
         )
+        input_init[:, self.index_true_symbol, :] = x
+        input_init[:, self.index_added_symbol, :] = torch.zeros(
+            batch_size, dim_global_block - seq_length, self.dim_global
+        ).to(x.device)
 
         emitter_position_int = (
-            torch.arange(dim_intermediate)
+            torch.arange(dim_global_block)
             .unsqueeze(0)
             .repeat(batch_size, 1)
             .to(x.device)
@@ -168,18 +192,18 @@ class PLTrainer(pl.LightningModule):
             emitter_position_int
         )  # batch_size, seq_length, dim_global
 
-        x = x + emitter_position
+        x = input_init + emitter_position
 
         receiver_position = self.position_embedding_encoder_receiver(
             emitter_position_int
-        )  # batch_size, dim_intermediate, dim_global
+        )  # batch_size, dim_global_block, dim_global
 
         # first the emitter transformation
         transmitted_information = self.emitter_transformer(
             x
-        )  # batch_size, dim_intermediate, dim_global
+        )  # batch_size, dim_global_block, dim_global
 
-        # resize to batch_size, dim_intermediate, 1
+        # resize to batch_size, dim_global_block, 1
         transmitted_information = self.resize_emitter(transmitted_information)
 
         # only power normalization (discretization leads to instability)
@@ -216,9 +240,9 @@ class PLTrainer(pl.LightningModule):
         #     count_init_symbol = torch.bincount(init_symbol.view(-1).long())
         #     print("count_init_symbol: ", count_init_symbol)
 
-        return received_information_quant, receiver_position, seq_length
+        return received_information_quant, receiver_position
 
-    def decode(self, received_information_quant, receiver_position, seq_length):
+    def decode(self, received_information_quant, receiver_position):
         """
         Decode the received information by resizing to global dimension, adding position embedding,
           applying receiver transformation, and resizing to output logits.
@@ -243,7 +267,7 @@ class PLTrainer(pl.LightningModule):
         # final resizing to output logits
         output = self.resize_output(output)
 
-        return output[:, :seq_length, :], received_information_quant
+        return output[:, self.index_true_symbol, :], received_information_quant
 
     def forward(self, x, coeff_code_rate, noise_level, inference=False):
         """
@@ -259,12 +283,12 @@ class PLTrainer(pl.LightningModule):
                     (batch_size, seq_length, nb_class)
         """
 
-        received_information_quant, receiver_position, seq_length = self.encode(
+        received_information_quant, receiver_position = self.encode(
             x, coeff_code_rate, noise_level, inference
         )
 
         output, received_information_quant = self.decode(
-            received_information_quant, receiver_position, seq_length
+            received_information_quant, receiver_position
         )
 
         return output, received_information_quant
@@ -297,7 +321,7 @@ class PLTrainer(pl.LightningModule):
 
         return loss, quantized_value, accuracy
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, _):
         """
         Perform a training step for the given batch and batch index.
 
@@ -310,8 +334,6 @@ class PLTrainer(pl.LightningModule):
         """
 
         x, bit_corresponding = batch
-
-        batch_size, seq_lenght = x.shape
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
@@ -337,8 +359,6 @@ class PLTrainer(pl.LightningModule):
         """
         self.eval()
         x, bit_corresponding = batch
-
-        batch_size, seq_lenght = x.shape
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
