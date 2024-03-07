@@ -124,6 +124,9 @@ class PLTrainer(pl.LightningModule):
         # embedding for the actual input
         self.input_embedding_emitter = nn.Embedding(nb_class, dim_global)
 
+        # true bit or added bit
+        self.input_embedding_emitter_true_added = nn.Embedding(2, dim_global)
+
         nb_dim_canal = 3
 
         # three resizing components
@@ -166,7 +169,7 @@ class PLTrainer(pl.LightningModule):
         """
         assert coeff_code_rate <= 1.0
 
-        batch_size, seq_length = x.shape
+        batch_size, _ = x.shape
         dim_global_block = self.dim_global_block
         assert dim_global_block < self.max_dim_input
 
@@ -178,9 +181,7 @@ class PLTrainer(pl.LightningModule):
             x.device
         )
         input_init[:, self.index_true_symbol, :] = x
-        input_init[:, self.index_added_symbol, :] = torch.zeros(
-            batch_size, dim_global_block - seq_length, self.dim_global
-        ).to(x.device)
+        input_init[:, self.index_added_symbol, :] = 0
 
         emitter_position_int = (
             torch.arange(dim_global_block)
@@ -192,7 +193,16 @@ class PLTrainer(pl.LightningModule):
             emitter_position_int
         )  # batch_size, seq_length, dim_global
 
-        x = input_init + emitter_position
+        true_added_info = torch.zeros(batch_size, dim_global_block).to(x.device)
+
+        true_added_info[:, self.index_true_symbol] = 1
+        true_added_info[:, self.index_added_symbol] = 0
+
+        x = (
+            input_init
+            + emitter_position
+            + self.input_embedding_emitter_true_added(true_added_info.long())
+        )
 
         receiver_position = self.position_embedding_encoder_receiver(
             emitter_position_int

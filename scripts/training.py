@@ -101,6 +101,7 @@ def main(args):
         noise_level=noise_level,
         coeff_code_rate=args.code_rate,
         dim_global_block=args.dim_input_global,
+        nb_block_size=16,
     )
 
     # compile the model
@@ -154,13 +155,13 @@ if __name__ == "__main__":
     # we retrieve the argument
     # 1 SNR value
     parser = argparse.ArgumentParser()
-    parser.add_argument("--SNR", type=float, default=0.0)
+    parser.add_argument("--SNR", type=float, default=3.0)
 
     # 2 code rate
-    parser.add_argument("--code_rate", type=float, default=64. / 128.)
+    parser.add_argument("--code_rate", type=float, default=6./16.)
 
     # 3 dim_input of the model
-    parser.add_argument("--dim_input_global", type=int, default=16)
+    parser.add_argument("--dim_input_global", type=int, default=240)
 
     # 4 nb of symbols
     parser.add_argument("--nb_symbols", type=int, default=2)
@@ -168,3 +169,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args)
+
+
+    
