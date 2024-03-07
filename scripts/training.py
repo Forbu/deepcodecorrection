@@ -69,7 +69,7 @@ def main(args):
         max_class=nb_class,
     )
     dataset_val = NoiseDataset(
-        dim_input=nb_effective_transmitted_symbol, lenght_epoch=1000, max_class=nb_class
+        dim_input=nb_effective_transmitted_symbol, lenght_epoch=5000, max_class=nb_class
     )
 
     snr_db = args.SNR  # this is Eb/N0
@@ -133,13 +133,13 @@ def main(args):
 
     # train the model
     trainer = pl.Trainer(
-        max_epochs=5000,
+        max_time="04:00:00", # we train for 4 hours
         accelerator="auto",
         devices=1,
         logger=logger,
         gradient_clip_val=2.,
         callbacks=[checkpoint_callback],
-        accumulate_grad_batches=10,
+        #accumulate_grad_batches=10,
         log_every_n_steps=5,
     )
 
