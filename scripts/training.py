@@ -78,7 +78,7 @@ def main(args):
     snr = 10 ** (snr_db / 10.0)
 
     # compute the noise level
-    noise_level = 1.0 / math.sqrt(snr)
+    noise_level = 1.0 / math.sqrt(snr * 2)
 
     # snr per bit
     snr_per_bit = snr / bit_per_class
