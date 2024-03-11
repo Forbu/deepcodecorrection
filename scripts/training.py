@@ -133,7 +133,7 @@ def main(args):
 
     # train the model
     trainer = pl.Trainer(
-        max_time="04:00:00", # we train for 4 hours
+        max_time={"hours": 3},
         accelerator="auto",
         devices=1,
         logger=logger,
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--SNR", type=float, default=3.0)
 
     # 2 code rate
-    parser.add_argument("--code_rate", type=float, default=6./16.)
+    parser.add_argument("--code_rate", type=float, default=7./16.)
 
     # 3 dim_input of the model
     parser.add_argument("--dim_input_global", type=int, default=240)
