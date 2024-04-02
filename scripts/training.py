@@ -133,20 +133,20 @@ def main(args):
 
     # train the model
     trainer = pl.Trainer(
-        max_time={"hours": 3},
+        max_time={"minutes": 70*3},
         accelerator="auto",
         devices=1,
         logger=logger,
-        gradient_clip_val=2.,
+        gradient_clip_val=2.0,
         callbacks=[checkpoint_callback],
-        #accumulate_grad_batches=10,
+        # accumulate_grad_batches=10,
         log_every_n_steps=5,
     )
 
     trainer.fit(
         model,
         DataLoader(dataset, batch_size=batch_size),
-        DataLoader(dataset_val, batch_size=batch_size),
+        #DataLoader(dataset_val, batch_size=batch_size),
         ckpt_path=last_checkpoint,
     )
 
@@ -158,7 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--SNR", type=float, default=3.0)
 
     # 2 code rate
-    parser.add_argument("--code_rate", type=float, default=7./16.)
+    parser.add_argument("--code_rate", type=float, default=7.0 / 16.0)
 
     # 3 dim_input of the model
     parser.add_argument("--dim_input_global", type=int, default=240)
@@ -169,6 +169,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(args)
-
-
-    
