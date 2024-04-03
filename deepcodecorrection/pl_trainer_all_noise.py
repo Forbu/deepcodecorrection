@@ -92,10 +92,6 @@ class PLTrainer(pl.LightningModule):
             local_attn_window_size=16,
         )
 
-        self.parameter_generator = nn.Parameter(
-            torch.randn(dim_global_block, dim_global_block)
-        )
-
         # decoder layer
 
         # decoder_layer = nn.TransformerEncoderLayer(

@@ -43,3 +43,28 @@ class NoiseDataset(Dataset):
             bit_array[:, index_bit] = (choosed_class >> index_bit) & 1
 
         return choosed_class, bit_array
+
+
+class NoiseDatasetWithNoiseInfo(NoiseDataset):
+    """
+    Dataset class for noise with noise info added
+    """
+
+    def __init__(self, dim_input, lenght_epoch, max_class=8, noise_interval=[0, 1]):
+        super().__init__(dim_input, lenght_epoch, max_class)
+
+        self.noise_interval = noise_interval
+
+    def __len__(self):
+        return self.lenght_epoch
+
+    def __getitem__(self, idx):
+        choosed_class, bit_array = super().__getitem__(idx)
+
+        # we also choose uniform noise between 0 and 1 and scale on the interval
+        choosed_noise = (
+            torch.rand(1) * (self.noise_interval[1] - self.noise_interval[0])
+            + self.noise_interval[0]
+        )
+
+        return choosed_class, bit_array, choosed_noise
