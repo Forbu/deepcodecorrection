@@ -62,9 +62,15 @@ class NoiseDatasetWithNoiseInfo(NoiseDataset):
         choosed_class, bit_array = super().__getitem__(idx)
 
         # we also choose uniform noise between 0 and 1 and scale on the interval
-        choosed_noise = (
+        choosed_snr = (
             torch.rand(1) * (self.noise_interval[1] - self.noise_interval[0])
             + self.noise_interval[0]
         )
 
-        return choosed_class, bit_array, choosed_noise
+        # convert SNR to normal value
+        snr = 10 ** (choosed_snr / 10.0)
+
+        # compute the noise level
+        noise_level = 1.0 / math.sqrt(snr * 2)
+
+        return choosed_class, bit_array, noise_level

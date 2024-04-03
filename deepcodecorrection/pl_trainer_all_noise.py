@@ -27,7 +27,6 @@ class PLTrainer(pl.LightningModule):
         nb_class,
         dim_global=32,
         coeff_code_rate=5.0 / 16.0,
-        noise_level=0.0,
         nb_codebook_size=8,
         dim_global_block=16,
         nb_block_size=16,
@@ -39,7 +38,6 @@ class PLTrainer(pl.LightningModule):
         self.nb_class = nb_class
         self.dim_global = dim_global
         self.coeff_code_rate = coeff_code_rate
-        self.noise_level = noise_level
         self.nb_codebook_size = nb_codebook_size
         self.dim_global_block = dim_global_block
         self.nb_block_size = nb_block_size
@@ -343,13 +341,13 @@ class PLTrainer(pl.LightningModule):
             The loss value after the training step.
         """
 
-        x, bit_corresponding = batch
+        x, bit_corresponding, noise_level = batch
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
         loss, _, accuracy = self.compute_loss(
-            x, coeff_code_rate, self.noise_level, bit_corresponding
+            x, coeff_code_rate, noise_level, bit_corresponding
         )
 
         self.log("train_loss", loss)
@@ -369,13 +367,13 @@ class PLTrainer(pl.LightningModule):
             The loss value after the validation step.
         """
         self.eval()
-        x, bit_corresponding = batch
+        x, bit_corresponding, noise_level = batch
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
         loss, quantized_value, accuracy = self.compute_loss(
-            x, coeff_code_rate, self.noise_level, bit_corresponding, inference=True
+            x, coeff_code_rate, noise_level, bit_corresponding, inference=True
         )
 
         self.log("val_loss", loss)
