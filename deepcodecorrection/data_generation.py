@@ -50,7 +50,7 @@ class NoiseDatasetWithNoiseInfo(NoiseDataset):
     Dataset class for noise with noise info added
     """
 
-    def __init__(self, dim_input, lenght_epoch, max_class=8, noise_interval=[0, 1]):
+    def __init__(self, dim_input, lenght_epoch, max_class=8, noise_interval=[-2, 5]):
         super().__init__(dim_input, lenght_epoch, max_class)
 
         self.noise_interval = noise_interval

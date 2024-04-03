@@ -1,6 +1,7 @@
 """
 Module for training with PyTorch Lightning
 """
+
 import math
 import torch
 import torch.nn as nn
@@ -30,6 +31,7 @@ class PLTrainer(pl.LightningModule):
         nb_codebook_size=8,
         dim_global_block=16,
         nb_block_size=16,
+        activated_film=False,
     ):
         super().__init__()
 
@@ -41,6 +43,7 @@ class PLTrainer(pl.LightningModule):
         self.nb_codebook_size = nb_codebook_size
         self.dim_global_block = dim_global_block
         self.nb_block_size = nb_block_size
+        self.activated_film = activated_film
 
         self.nb_bit = math.ceil(math.log2(nb_class))
 
@@ -102,6 +105,13 @@ class PLTrainer(pl.LightningModule):
         # self.receiver_transformer = nn.TransformerEncoder(decoder_layer, num_layers=6)
         # self.receiver_transformer = torch.compile(self.receiver_transformer)
 
+        # film layer for all the projection
+        self.film_layer = nn.Sequential(
+            nn.Linear(1, dim_global),
+            nn.Sigmoid(),
+            nn.Linear(dim_global, (dim_global + 1) * 4),
+        )
+
         self.receiver_transformer = LinearAttentionTransformer(
             dim=dim_global,
             heads=1,
@@ -148,7 +158,7 @@ class PLTrainer(pl.LightningModule):
 
         self.apply(init_weights)
 
-    def encode(self, x, coeff_code_rate, noise_level, inference=False):
+    def encode(self, x, coeff_code_rate, noise_level, noise_film):
         """
         Encodes the input data with noise and quantization, and returns the received information,
           receiver position, and sequence length.
@@ -157,7 +167,7 @@ class PLTrainer(pl.LightningModule):
             x: Tensor - The input data to be encoded.
             coeff_code_rate: float - The coefficient for code rate.
             noise_level: float - The level of noise to be added.
-            inference: bool - Flag indicating whether the function is used for inference.
+            noise_film: Tensor - The noise information given in film layer
 
         Returns:
             received_information_quant: Tensor - The received information
@@ -234,7 +244,7 @@ class PLTrainer(pl.LightningModule):
 
         # adding noise
         noisy_transmitted_information = (
-            quantized + torch.randn_like(quantized) * noise_level
+            quantized + torch.randn_like(quantized) * noise_level.unsqueeze(2)
         )
 
         # quantized_after_noise, indices_after_noise = self.quantizer_after_noise(
@@ -250,7 +260,7 @@ class PLTrainer(pl.LightningModule):
 
         return received_information_quant, receiver_position
 
-    def decode(self, received_information_quant, receiver_position):
+    def decode(self, received_information_quant, receiver_position, noise_film):
         """
         Decode the received information by resizing to global dimension, adding position embedding,
           applying receiver transformation, and resizing to output logits.
@@ -277,7 +287,7 @@ class PLTrainer(pl.LightningModule):
 
         return output[:, self.index_true_symbol, :], received_information_quant
 
-    def forward(self, x, coeff_code_rate, noise_level, inference=False):
+    def forward(self, x, coeff_code_rate, noise_level):
         """
         Forward pass of the neural network model.
 
@@ -291,19 +301,22 @@ class PLTrainer(pl.LightningModule):
                     (batch_size, seq_length, nb_class)
         """
 
+        noise_level =noise_level.unsqueeze(1).float()
+
+        # generate embedding for the input
+        noise_film = self.film_layer(noise_level)
+
         received_information_quant, receiver_position = self.encode(
-            x, coeff_code_rate, noise_level, inference
+            x, coeff_code_rate, noise_level, noise_film
         )
 
         output, received_information_quant = self.decode(
-            received_information_quant, receiver_position
+            received_information_quant, receiver_position, noise_film
         )
 
         return output, received_information_quant
 
-    def compute_loss(
-        self, x, coeff_code_rate, noise_level, bit_corresponding, inference=False
-    ):
+    def compute_loss(self, x, coeff_code_rate, noise_level, bit_corresponding):
         """
         Compute the loss function.
 
@@ -317,9 +330,7 @@ class PLTrainer(pl.LightningModule):
             output: tensor representing the output of the neural network
             (batch_size, seq_length, nb_class)
         """
-        output, quantized_value = self.forward(
-            x, coeff_code_rate, noise_level, inference
-        )
+        output, quantized_value = self.forward(x, coeff_code_rate, noise_level)
 
         # loss (cross entropy)
         loss = self.criterion(output, bit_corresponding)
@@ -373,7 +384,7 @@ class PLTrainer(pl.LightningModule):
         coeff_code_rate = self.coeff_code_rate
 
         loss, quantized_value, accuracy = self.compute_loss(
-            x, coeff_code_rate, noise_level, bit_corresponding, inference=True
+            x, coeff_code_rate, noise_level, bit_corresponding
         )
 
         self.log("val_loss", loss)
