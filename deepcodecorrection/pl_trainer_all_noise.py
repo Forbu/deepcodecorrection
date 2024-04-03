@@ -216,10 +216,30 @@ class PLTrainer(pl.LightningModule):
             emitter_position_int
         )  # batch_size, dim_global_block, dim_global
 
+        # film layer
+        # noise film is (batch_size, (dim_global + 1) `* 4))
+        # x is (batch_size, seq_length, dim_global)
+        film_linear_1 = noise_film[:, : self.dim_global].unsqueeze(1)
+        film_bias_1 = noise_film[:, self.dim_global : (self.dim_global + 1)].unsqueeze(
+            1
+        )
+
+        x = film_linear_1 * x + film_bias_1
+
         # first the emitter transformation
         transmitted_information = self.emitter_transformer(
             x
         )  # batch_size, dim_global_block, dim_global
+
+        # film layer
+        film_linear_2 = noise_film[
+            :, (self.dim_global + 1) : (self.dim_global * 2 + 1)
+        ].unsqueeze(1)
+        film_bias_2 = noise_film[
+            :, (self.dim_global * 2 + 1) : (self.dim_global * 2 + 2)
+        ].unsqueeze(1)
+
+        transmitted_information = film_linear_2 * transmitted_information + film_bias_2
 
         # resize to batch_size, dim_global_block, 1
         transmitted_information = self.resize_emitter(transmitted_information)
@@ -243,9 +263,9 @@ class PLTrainer(pl.LightningModule):
         quantized = quantized[:, :, :-1]
 
         # adding noise
-        noisy_transmitted_information = (
-            quantized + torch.randn_like(quantized) * noise_level.unsqueeze(2)
-        )
+        noisy_transmitted_information = quantized + torch.randn_like(
+            quantized
+        ) * noise_level.unsqueeze(2)
 
         # quantized_after_noise, indices_after_noise = self.quantizer_after_noise(
         #     noisy_transmitted_information
@@ -279,8 +299,28 @@ class PLTrainer(pl.LightningModule):
         # adding position embedding
         received_information = received_information + receiver_position
 
+        # film layer
+        film_linear_3 = noise_film[
+            :, (self.dim_global * 2 + 2) : (self.dim_global * 3 + 2)
+        ].unsqueeze(1)
+        film_bias_3 = noise_film[
+            :, (self.dim_global * 3 + 2) : (self.dim_global * 3 + 3)
+        ].unsqueeze(1)
+
+        received_information = film_linear_3 * received_information + film_bias_3
+
         # second the receiver transformation
         output = self.receiver_transformer(received_information)
+
+        # film layer
+        film_linear_4 = noise_film[
+            :, (self.dim_global * 3 + 3) : (self.dim_global * 4 + 3)
+        ].unsqueeze(1)
+        film_bias_4 = noise_film[
+            :, (self.dim_global * 4 + 3) : (self.dim_global * 4 + 4)
+        ].unsqueeze(1)
+
+        output = film_linear_4 * output + film_bias_4
 
         # final resizing to output logits
         output = self.resize_output(output)
@@ -301,7 +341,7 @@ class PLTrainer(pl.LightningModule):
                     (batch_size, seq_length, nb_class)
         """
 
-        noise_level =noise_level.unsqueeze(1).float()
+        noise_level = noise_level.unsqueeze(1).float()
 
         # generate embedding for the input
         noise_film = self.film_layer(noise_level)
