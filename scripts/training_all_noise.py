@@ -1,6 +1,7 @@
 """
 In this script we will train the model to check the performance
 """
+
 import os
 import math
 
@@ -73,7 +74,19 @@ def main(args):
     print("nb_effective_transmitted_symbol : ", nb_effective_transmitted_symbol)
 
     # we choose the name according to the SNR and code rate
-    name_model = f"deepcode_SNR_code_rate_{round(args.code_rate, 4)}_bit_{bit_per_class}"
+    name_model = (
+        f"deepcode_SNR_code_rate_{round(args.code_rate, 4)}_bit_{bit_per_class}"
+    )
+
+    datasets_validation = [
+        NoiseDatasetWithNoiseInfo(
+            dim_input=nb_effective_transmitted_symbol,
+            lenght_epoch=batch_size,
+            max_class=nb_class,
+            noise_interval=[i, i],
+        )
+        for i in range(-2, 5)
+    ]
 
     # init trainer
     model = PLTrainer(
@@ -83,6 +96,9 @@ def main(args):
         coeff_code_rate=args.code_rate,
         dim_global_block=args.dim_input_global,
         nb_block_size=16,
+        dataset_train=dataset,
+        datasets_validation=datasets_validation,
+        batch_size=batch_size,
     )
 
     # compile the model
@@ -90,17 +106,25 @@ def main(args):
 
     logger = TensorBoardLogger("tb_logs", name=name_model)
 
+    # use wandb logger instead
+    import wandb
+    from lightning.pytorch.loggers import WandbLogger
+
+    wandb.init(project="deepcodecorrection", name=name_model)
+
+    logger = WandbLogger(project="deepcodecorrection", name=name_model)
+
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints",
-        filename=name_model + "-{epoch:02d}-{val_loss:.2f}",
+        filename=name_model + "-{epoch:02d}-{train_loss:.2f}",
         save_top_k=1,
-        monitor="val_loss",
+        monitor="train_loss",
         mode="min",
     )
 
     # train the model
     trainer = pl.Trainer(
-        max_time={"minutes": 70*3},
+        max_time={"minutes": 70 * 3},
         accelerator="auto",
         devices=1,
         logger=logger,
@@ -113,7 +137,7 @@ def main(args):
     trainer.fit(
         model,
         DataLoader(dataset, batch_size=batch_size),
-        #DataLoader(dataset_val, batch_size=batch_size),
+        # DataLoader(dataset_val, batch_size=batch_size),
     )
 
 

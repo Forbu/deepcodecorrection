@@ -10,6 +10,10 @@ import lightning.pytorch as pl
 import torchmetrics
 import matplotlib.pyplot as plt
 
+# import Dataloader class
+from torch.utils.data import DataLoader
+from lightning.pytorch.utilities.combined_loader import CombinedLoader
+
 from deepcodecorrection.utils import generate_random_string
 
 from linear_attention_transformer import LinearAttentionTransformer
@@ -32,6 +36,9 @@ class PLTrainer(pl.LightningModule):
         dim_global_block=16,
         nb_block_size=16,
         activated_film=False,
+        dataset_train=None,
+        datasets_validation=None,
+        batch_size=1024,
     ):
         super().__init__()
 
@@ -48,6 +55,10 @@ class PLTrainer(pl.LightningModule):
         self.nb_bit = math.ceil(math.log2(nb_class))
 
         self.random_string = generate_random_string(10)
+
+        self.dataset_train = dataset_train
+        self.datasets_validation = datasets_validation
+        self.batch_size = batch_size
 
         # block analysis
         # check if dim_global_block / nb_block_size is an integer
@@ -344,7 +355,7 @@ class PLTrainer(pl.LightningModule):
         noise_level = noise_level.unsqueeze(1).float()
 
         # generate embedding for the input
-        noise_film = self.film_layer(noise_level)
+        noise_film = self.film_layer(noise_level / 5.0)
 
         received_information_quant, receiver_position = self.encode(
             x, coeff_code_rate, noise_level, noise_film
@@ -406,7 +417,7 @@ class PLTrainer(pl.LightningModule):
         self.log("train_error", 1 - accuracy)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         """
         Perform a validation step for the given batch and batch index.
 
@@ -418,6 +429,7 @@ class PLTrainer(pl.LightningModule):
             The loss value after the validation step.
         """
         self.eval()
+        SNR_value = self.datasets_validation[dataloader_idx].noise_interval[0]
         x, bit_corresponding, noise_level = batch
 
         # choose random code rate
@@ -427,15 +439,15 @@ class PLTrainer(pl.LightningModule):
             x, coeff_code_rate, noise_level, bit_corresponding
         )
 
-        self.log("val_loss", loss)
-        self.log("val_accuracy", accuracy)
+        self.log("val_loss_" + str(SNR_value), loss)
+        self.log("val_error_" + str(SNR_value), 1 - accuracy)
 
         # we take a look at the quantize value
         quantized_value = quantized_value.view(-1, quantized_value.shape[-1])
         quantized_value = quantized_value.detach().cpu().numpy()
 
         # we plot the quantized value
-        self.plot_quantized_value(quantized_value)
+        # self.plot_quantized_value(quantized_value)
 
         self.train()
 
@@ -480,3 +492,42 @@ class PLTrainer(pl.LightningModule):
         optimizer_all = torch.optim.AdamW(self.parameters(), lr=5e-4)
 
         return (optimizer_all,)
+
+    def train_dataloader(self):
+        """
+        Create the training dataloader.
+
+        Args:
+            self: the neural network instance
+
+        Returns:
+            The training dataloader.
+        """
+
+        return DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+    def val_dataloader(self):
+        """
+        Create the validation dataloader.
+
+        Args:
+            self: the neural network instance
+
+        Returns:
+            The validation dataloader.
+        """
+
+        return CombinedLoader(
+            [
+                DataLoader(dataset, batch_size=self.batch_size)
+                for dataset in self.datasets_validation
+            ],
+            mode="sequential",
+        )
