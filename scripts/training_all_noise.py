@@ -62,12 +62,16 @@ def main(args):
 
     nb_effective_transmitted_symbol = int(args.code_rate * args.dim_input_global)
 
-    batch_size = 1024
+    start_snr = 8
+    end_snr = 16
+
+    batch_size = 512
     # init dataset
     dataset = NoiseDatasetWithNoiseInfo(
         dim_input=nb_effective_transmitted_symbol,
         lenght_epoch=20000,
         max_class=nb_class,
+        noise_interval=[start_snr, end_snr],
     )
 
     print("code rate : ", args.code_rate)
@@ -85,20 +89,21 @@ def main(args):
             max_class=nb_class,
             noise_interval=[i, i],
         )
-        for i in range(-2, 5)
+        for i in range(start_snr, end_snr)
     ]
 
     # init trainer
     model = PLTrainer(
-        max_dim_input=300,
+        max_dim_input=500,
         nb_class=nb_class,
-        dim_global=32,
+        dim_global=32, # 32 before
         coeff_code_rate=args.code_rate,
         dim_global_block=args.dim_input_global,
         nb_block_size=16,
         dataset_train=dataset,
         datasets_validation=datasets_validation,
         batch_size=batch_size,
+        local_attention=16,
     )
 
     # compile the model
@@ -106,13 +111,13 @@ def main(args):
 
     logger = TensorBoardLogger("tb_logs", name=name_model)
 
-    # use wandb logger instead
-    import wandb
-    from lightning.pytorch.loggers import WandbLogger
+    # # use wandb logger instead
+    # import wandb
+    # from lightning.pytorch.loggers import WandbLogger
 
-    wandb.init(project="deepcodecorrection", name=name_model)
+    # wandb.init(project="deepcodecorrection", name=name_model)
 
-    logger = WandbLogger(project="deepcodecorrection", name=name_model)
+    # logger = WandbLogger(project="deepcodecorrection", name=name_model)
 
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints",
@@ -124,13 +129,13 @@ def main(args):
 
     # train the model
     trainer = pl.Trainer(
-        max_time={"minutes": 70 * 3},
+        max_time={"minutes": 60 * 5},
         accelerator="auto",
         devices=1,
         logger=logger,
         gradient_clip_val=2.0,
         callbacks=[checkpoint_callback],
-        # accumulate_grad_batches=10,
+#        accumulate_grad_batches=2,
         log_every_n_steps=5,
     )
 
@@ -147,13 +152,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # 2 code rate
-    parser.add_argument("--code_rate", type=float, default=7.0 / 16.0)
+    parser.add_argument("--code_rate", type=float, default=8.0 / 16.0)
 
     # 3 dim_input of the model
-    parser.add_argument("--dim_input_global", type=int, default=240)
+    parser.add_argument("--dim_input_global", type=int, default=448)
 
     # 4 nb of symbols
-    parser.add_argument("--nb_symbols", type=int, default=2)
+    parser.add_argument("--nb_symbols", type=int, default=16)
 
     args = parser.parse_args()
 

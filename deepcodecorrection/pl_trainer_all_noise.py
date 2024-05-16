@@ -39,6 +39,7 @@ class PLTrainer(pl.LightningModule):
         dataset_train=None,
         datasets_validation=None,
         batch_size=1024,
+        local_attention=16,
     ):
         super().__init__()
 
@@ -101,7 +102,7 @@ class PLTrainer(pl.LightningModule):
             depth=6,
             max_seq_len=8192 // 16,
             n_local_attn_heads=1,
-            local_attn_window_size=16,
+            local_attn_window_size=local_attention,
         )
 
         # decoder layer
@@ -129,7 +130,7 @@ class PLTrainer(pl.LightningModule):
             depth=6,
             max_seq_len=8192 // 16,
             n_local_attn_heads=1,
-            local_attn_window_size=16,
+            local_attn_window_size=local_attention,
         )
 
         # embedding for the position
@@ -289,7 +290,7 @@ class PLTrainer(pl.LightningModule):
         #     count_init_symbol = torch.bincount(init_symbol.view(-1).long())
         #     print("count_init_symbol: ", count_init_symbol)
 
-        return received_information_quant, receiver_position
+        return received_information_quant, receiver_position, quantized
 
     def decode(self, received_information_quant, receiver_position, noise_film):
         """
@@ -357,7 +358,7 @@ class PLTrainer(pl.LightningModule):
         # generate embedding for the input
         noise_film = self.film_layer(noise_level / 5.0)
 
-        received_information_quant, receiver_position = self.encode(
+        received_information_quant, receiver_position, quantized = self.encode(
             x, coeff_code_rate, noise_level, noise_film
         )
 
@@ -365,7 +366,7 @@ class PLTrainer(pl.LightningModule):
             received_information_quant, receiver_position, noise_film
         )
 
-        return output, received_information_quant
+        return output, quantized
 
     def compute_loss(self, x, coeff_code_rate, noise_level, bit_corresponding):
         """
@@ -447,7 +448,7 @@ class PLTrainer(pl.LightningModule):
         quantized_value = quantized_value.detach().cpu().numpy()
 
         # we plot the quantized value
-        # self.plot_quantized_value(quantized_value)
+        self.plot_quantized_value(quantized_value)
 
         self.train()
 
