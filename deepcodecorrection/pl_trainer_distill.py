@@ -1,13 +1,19 @@
 """
 Module for training with PyTorch Lightning
 """
+
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import lightning.pytorch as pl
 
 import torchmetrics
 import matplotlib.pyplot as plt
+
+# import Dataloader class
+from torch.utils.data import DataLoader
+from lightning.pytorch.utilities.combined_loader import CombinedLoader
 
 from deepcodecorrection.utils import generate_random_string
 
@@ -27,10 +33,14 @@ class PLTrainer(pl.LightningModule):
         nb_class,
         dim_global=32,
         coeff_code_rate=5.0 / 16.0,
-        noise_level=0.0,
         nb_codebook_size=8,
         dim_global_block=16,
         nb_block_size=16,
+        activated_film=False,
+        dataset_train=None,
+        datasets_validation=None,
+        batch_size=1024,
+        local_attention=16,
     ):
         super().__init__()
 
@@ -39,14 +49,18 @@ class PLTrainer(pl.LightningModule):
         self.nb_class = nb_class
         self.dim_global = dim_global
         self.coeff_code_rate = coeff_code_rate
-        self.noise_level = noise_level
         self.nb_codebook_size = nb_codebook_size
         self.dim_global_block = dim_global_block
         self.nb_block_size = nb_block_size
+        self.activated_film = activated_film
 
         self.nb_bit = math.ceil(math.log2(nb_class))
 
         self.random_string = generate_random_string(10)
+
+        self.dataset_train = dataset_train
+        self.datasets_validation = datasets_validation
+        self.batch_size = batch_size
 
         # block analysis
         # check if dim_global_block / nb_block_size is an integer
@@ -72,41 +86,22 @@ class PLTrainer(pl.LightningModule):
         self.index_true_symbol = index_block[true_block]
         self.index_added_symbol = index_block[~true_block]
 
-        # ## encoder
-        # encoder_layer = nn.TransformerEncoderLayer(
-        #     d_model=dim_global,
-        #     nhead=1,
-        #     dim_feedforward=dim_global * 4,
-        #     batch_first=True,
-        # )
-
-        # self.emitter_transformer = nn.TransformerEncoder(encoder_layer, num_layers=6)
-        # self.emitter_transformer = torch.compile(self.emitter_transformer)
-
-        self.emitter_transformer = LinearAttentionTransformer(
-            dim=dim_global,
-            heads=1,
-            depth=6,
-            max_seq_len=8192 // 16,
-            n_local_attn_heads=1,
-            local_attn_window_size=16,
-        )
-
-        self.parameter_generator = nn.Parameter(
-            torch.randn(dim_global_block, dim_global_block)
-        )
-
-        # decoder layer
-
-        # decoder_layer = nn.TransformerEncoderLayer(
-        #     d_model=dim_global,
-        #     nhead=1,
-        #     dim_feedforward=dim_global * 4,
-        #     batch_first=True,
-        # )
-
         # self.receiver_transformer = nn.TransformerEncoder(decoder_layer, num_layers=6)
         # self.receiver_transformer = torch.compile(self.receiver_transformer)
+
+        # film layer for all the projection
+        self.film_layer = nn.Sequential(
+            nn.Linear(1, dim_global),
+            nn.Sigmoid(),
+            nn.Linear(dim_global, (dim_global + 1) * 4),
+        )
+
+        self.parity_matrix = nn.Parameter(
+            torch.randn(
+                (int(dim_global_block * coeff_code_rate),
+                int(dim_global_block * (1 - coeff_code_rate)),)
+            )
+        )
 
         self.receiver_transformer = LinearAttentionTransformer(
             dim=dim_global,
@@ -114,7 +109,7 @@ class PLTrainer(pl.LightningModule):
             depth=6,
             max_seq_len=8192 // 16,
             n_local_attn_heads=1,
-            local_attn_window_size=16,
+            local_attn_window_size=local_attention,
         )
 
         # embedding for the position
@@ -154,7 +149,7 @@ class PLTrainer(pl.LightningModule):
 
         self.apply(init_weights)
 
-    def encode(self, x, coeff_code_rate, noise_level, inference=False):
+    def encode(self, x, coeff_code_rate, noise_level, noise_film):
         """
         Encodes the input data with noise and quantization, and returns the received information,
           receiver position, and sequence length.
@@ -163,7 +158,7 @@ class PLTrainer(pl.LightningModule):
             x: Tensor - The input data to be encoded.
             coeff_code_rate: float - The coefficient for code rate.
             noise_level: float - The level of noise to be added.
-            inference: bool - Flag indicating whether the function is used for inference.
+            noise_film: Tensor - The noise information given in film layer
 
         Returns:
             received_information_quant: Tensor - The received information
@@ -177,15 +172,19 @@ class PLTrainer(pl.LightningModule):
         dim_global_block = self.dim_global_block
         assert dim_global_block < self.max_dim_input
 
-        # generate embedding for the input
-        x = self.input_embedding_emitter(x)  # batch_size, seq_length, dim_global
+        # convert to float
+        x = x.float()
 
         # we create the interleave input
-        input_init = torch.zeros(batch_size, dim_global_block, self.dim_global).to(
-            x.device
+        quantized = torch.zeros(batch_size, dim_global_block, 2).to(x.device)
+
+        quantized[:, self.index_true_symbol, 0] = (x - 0.5) * 2
+
+        parity_matrix_clean = F.sigmoid(self.parity_matrix)
+
+        quantized[:, self.index_added_symbol, 0] = (
+            torch.cos(torch.matmul(x, parity_matrix_clean) * math.pi)
         )
-        input_init[:, self.index_true_symbol, :] = x
-        input_init[:, self.index_added_symbol, :] = 0
 
         emitter_position_int = (
             torch.arange(dim_global_block)
@@ -193,70 +192,27 @@ class PLTrainer(pl.LightningModule):
             .repeat(batch_size, 1)
             .to(x.device)
         )
-        emitter_position = self.position_embedding_encoder_emitter(
-            emitter_position_int
-        )  # batch_size, seq_length, dim_global
-
-        true_added_info = torch.zeros(batch_size, dim_global_block).to(x.device)
-
-        true_added_info[:, self.index_true_symbol] = 1
-        true_added_info[:, self.index_added_symbol] = 0
-
-        x = (
-            input_init
-            + emitter_position
-            + self.input_embedding_emitter_true_added(true_added_info.long())
-        )
 
         receiver_position = self.position_embedding_encoder_receiver(
             emitter_position_int
         )  # batch_size, dim_global_block, dim_global
 
-        # first the emitter transformation
-        transmitted_information = self.emitter_transformer(
-            x
-        )  # batch_size, dim_global_block, dim_global
-
-        # resize to batch_size, dim_global_block, 1
-        transmitted_information = self.resize_emitter(transmitted_information)
-
-        # only power normalization (discretization leads to instability)
-        # we impose that the mean of power of transmitted symbol is 1
-
-        # global power normalization
-        # quantized = transmitted_information / torch.sqrt(
-        #     (transmitted_information.norm(dim=2, keepdim=True, p=2) ** 2).mean(
-        #         dim=1, keepdim=True
-        #     )
-        # )
-
-        quantized = transmitted_information / transmitted_information.norm(
-            dim=2, keepdim=True, p=2
-        )
-
-        # print("power per batch element :", quantized)
-
-        quantized = quantized[:, :, :-1]
-
         # adding noise
-        noisy_transmitted_information = (
-            quantized + torch.randn_like(quantized) * noise_level
-        )
+        received_information_quant = quantized + torch.randn_like(
+            quantized
+        ) * noise_level.unsqueeze(2)
 
         # quantized_after_noise, indices_after_noise = self.quantizer_after_noise(
         #     noisy_transmitted_information
         # )
-        quantized_after_noise = noisy_transmitted_information
-
-        received_information_quant = quantized_after_noise
 
         # if inference:
         #     count_init_symbol = torch.bincount(init_symbol.view(-1).long())
         #     print("count_init_symbol: ", count_init_symbol)
 
-        return received_information_quant, receiver_position
+        return received_information_quant, receiver_position, quantized
 
-    def decode(self, received_information_quant, receiver_position):
+    def decode(self, received_information_quant, receiver_position, noise_film):
         """
         Decode the received information by resizing to global dimension, adding position embedding,
           applying receiver transformation, and resizing to output logits.
@@ -275,15 +231,35 @@ class PLTrainer(pl.LightningModule):
         # adding position embedding
         received_information = received_information + receiver_position
 
+        # film layer
+        film_linear_3 = noise_film[
+            :, (self.dim_global * 2 + 2) : (self.dim_global * 3 + 2)
+        ].unsqueeze(1)
+        film_bias_3 = noise_film[
+            :, (self.dim_global * 3 + 2) : (self.dim_global * 3 + 3)
+        ].unsqueeze(1)
+
+        received_information = film_linear_3 * received_information + film_bias_3
+
         # second the receiver transformation
         output = self.receiver_transformer(received_information)
+
+        # film layer
+        film_linear_4 = noise_film[
+            :, (self.dim_global * 3 + 3) : (self.dim_global * 4 + 3)
+        ].unsqueeze(1)
+        film_bias_4 = noise_film[
+            :, (self.dim_global * 4 + 3) : (self.dim_global * 4 + 4)
+        ].unsqueeze(1)
+
+        output = film_linear_4 * output + film_bias_4
 
         # final resizing to output logits
         output = self.resize_output(output)
 
         return output[:, self.index_true_symbol, :], received_information_quant
 
-    def forward(self, x, coeff_code_rate, noise_level, inference=False):
+    def forward(self, x, coeff_code_rate, noise_level):
         """
         Forward pass of the neural network model.
 
@@ -297,19 +273,22 @@ class PLTrainer(pl.LightningModule):
                     (batch_size, seq_length, nb_class)
         """
 
-        received_information_quant, receiver_position = self.encode(
-            x, coeff_code_rate, noise_level, inference
+        noise_level = noise_level.unsqueeze(1).float()
+
+        # generate embedding for the input
+        noise_film = self.film_layer(noise_level / 5.0)
+
+        received_information_quant, receiver_position, quantized = self.encode(
+            x, coeff_code_rate, noise_level, noise_film
         )
 
         output, received_information_quant = self.decode(
-            received_information_quant, receiver_position
+            received_information_quant, receiver_position, noise_film
         )
 
-        return output, received_information_quant
+        return output, quantized
 
-    def compute_loss(
-        self, x, coeff_code_rate, noise_level, bit_corresponding, inference=False
-    ):
+    def compute_loss(self, x, coeff_code_rate, noise_level, bit_corresponding):
         """
         Compute the loss function.
 
@@ -323,9 +302,7 @@ class PLTrainer(pl.LightningModule):
             output: tensor representing the output of the neural network
             (batch_size, seq_length, nb_class)
         """
-        output, quantized_value = self.forward(
-            x, coeff_code_rate, noise_level, inference
-        )
+        output, quantized_value = self.forward(x, coeff_code_rate, noise_level)
 
         # loss (cross entropy)
         loss = self.criterion(output, bit_corresponding)
@@ -347,13 +324,13 @@ class PLTrainer(pl.LightningModule):
             The loss value after the training step.
         """
 
-        x, bit_corresponding = batch
+        x, bit_corresponding, noise_level = batch
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
         loss, _, accuracy = self.compute_loss(
-            x, coeff_code_rate, self.noise_level, bit_corresponding
+            x, coeff_code_rate, noise_level, bit_corresponding
         )
 
         self.log("train_loss", loss)
@@ -361,7 +338,7 @@ class PLTrainer(pl.LightningModule):
         self.log("train_error", 1 - accuracy)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         """
         Perform a validation step for the given batch and batch index.
 
@@ -373,17 +350,18 @@ class PLTrainer(pl.LightningModule):
             The loss value after the validation step.
         """
         self.eval()
-        x, bit_corresponding = batch
+        SNR_value = self.datasets_validation[dataloader_idx].noise_interval[0]
+        x, bit_corresponding, noise_level = batch
 
         # choose random code rate
         coeff_code_rate = self.coeff_code_rate
 
         loss, quantized_value, accuracy = self.compute_loss(
-            x, coeff_code_rate, self.noise_level, bit_corresponding, inference=True
+            x, coeff_code_rate, noise_level, bit_corresponding
         )
 
-        self.log("val_loss", loss)
-        self.log("val_accuracy", accuracy)
+        self.log("val_loss_" + str(SNR_value), loss)
+        self.log("val_error_" + str(SNR_value), 1 - accuracy)
 
         # we take a look at the quantize value
         quantized_value = quantized_value.view(-1, quantized_value.shape[-1])
@@ -435,3 +413,42 @@ class PLTrainer(pl.LightningModule):
         optimizer_all = torch.optim.AdamW(self.parameters(), lr=5e-4)
 
         return (optimizer_all,)
+
+    def train_dataloader(self):
+        """
+        Create the training dataloader.
+
+        Args:
+            self: the neural network instance
+
+        Returns:
+            The training dataloader.
+        """
+
+        return DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+    def val_dataloader(self):
+        """
+        Create the validation dataloader.
+
+        Args:
+            self: the neural network instance
+
+        Returns:
+            The validation dataloader.
+        """
+
+        return CombinedLoader(
+            [
+                DataLoader(dataset, batch_size=self.batch_size)
+                for dataset in self.datasets_validation
+            ],
+            mode="sequential",
+        )
