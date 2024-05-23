@@ -1,9 +1,4 @@
 code_rate SNR PERF N R METHOD
-0.5 0 0.009 240 0.5 TransfoCode
-0.5 1 0.003 240 0.5 TransfoCode
-0.5 2 0.0008 240 0.5 TransfoCode
-0.5 3 0.000138 240 0.5 TransfoCode
-0.5 4 0.000015 240 0.5 TransfoCode
 0.5 -2 0.04 448 0.5 TransfoCode
 0.5 -1 0.019 448 0.5 TransfoCode
 0.5 0 0.0068 448 0.5 TransfoCode
